@@ -1,0 +1,78 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #1f2328;
+  --muted: #5f6368;
+  --accent: #2563eb;
+  --malicious: #c62828;
+  --suspicious: #d84315;
+  --unknown: #9a7400;
+  --clean: #2e7d32;
+  --line: #e2e4e8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191c;
+    --card: #222529;
+    --text: #e8eaed;
+    --muted: #a6abb2;
+    --accent: #6ea0ff;
+    --malicious: #ff6b6b;
+    --suspicious: #ff8a50;
+    --unknown: #e0b54a;
+    --clean: #6fcf73;
+    --line: #34383d;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.card {
+  width: min(640px, 100%);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 6px solid var(--muted);
+  border-radius: 10px;
+  padding: 24px 28px;
+}
+body[data-verdict="malicious"] .card { border-top-color: var(--malicious); }
+body[data-verdict="suspicious"] .card { border-top-color: var(--suspicious); }
+body[data-verdict="unknown"] .card { border-top-color: var(--unknown); }
+body[data-verdict="clean"] .card { border-top-color: var(--clean); }
+header { display: flex; gap: 14px; align-items: center; }
+.brand { color: var(--muted); font-size: 13px; }
+h1 { margin: 0; font-size: 22px; font-weight: 600; }
+body[data-verdict="malicious"] h1 { color: var(--malicious); }
+body[data-verdict="suspicious"] h1 { color: var(--suspicious); }
+body[data-verdict="unknown"] h1 { color: var(--unknown); }
+body[data-verdict="clean"] h1 { color: var(--clean); }
+.url { word-break: break-all; color: var(--muted); font-family: Consolas, monospace; font-size: 13px; margin: 16px 0 8px; }
+ul { padding-left: 20px; margin: 8px 0 20px; }
+li { margin: 4px 0; }
+.buttons { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+button, .buttons a {
+  font: inherit;
+  border-radius: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-decoration: none;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.quiet { color: var(--muted); margin-left: auto; }
+/* popup */
+.popup { width: 320px; padding: 14px 16px; display: block; min-height: 0; }
+.popup h2 { margin: 0 0 6px; font-size: 16px; }
+.popup .row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; gap: 12px; }
+.popup .status { color: var(--muted); font-size: 13px; }
+.popup .verdict { font-weight: 600; }

@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-atlas"
+version = "0.4.0"
+description = "Project Atlas: VirusTotal-powered protection and cleanup for Windows, alongside Windows Defender."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+    "watchdog>=4.0",
+    "keyring>=25.0",
+    "winotify>=1.1; sys_platform == 'win32'",
+    "pystray>=0.19",
+    "Pillow>=10.0",
+    "Send2Trash>=1.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+atlas = "atlas.cli:main"
+
+# No console window: this is what runs at sign-in.
+[project.gui-scripts]
+atlas-tray = "atlas.tray:main"
+atlas-gui = "atlas.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["atlas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

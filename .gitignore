@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+# Never commit secrets. The API key lives in Windows Credential Manager, not in files.
+*.key
+.env
+*.pem
+build/
+dist/
+.claude/
