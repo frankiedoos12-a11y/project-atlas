@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from atlas import config
+from atlas import config, defender
 from atlas.app import build_scanner, setup_logging
 from atlas.gui import VERDICT_COLORS, DetailBox, Table, open_in_explorer, style_window
 from atlas.quarantine import quarantine_file
@@ -144,9 +144,10 @@ class ScanWindow:
         self.vt_button = ttk.Button(buttons, text="View on VirusTotal", command=self._open_vt)
         self.open_button = ttk.Button(buttons, text="Open file location", command=self._open_location)
         self.again_button = ttk.Button(buttons, text="Check again", command=self._check_again)
+        self.defender_button = ttk.Button(buttons, text="Ask Defender", command=self._ask_defender)
         self.upload_button = ttk.Button(buttons, text="Upload to VirusTotal...", command=self._upload)
         self.quarantine_button = ttk.Button(buttons, text="Move to quarantine...", command=self._quarantine)
-        for b in (self.vt_button, self.open_button, self.again_button):
+        for b in (self.vt_button, self.open_button, self.again_button, self.defender_button):
             b.pack(side="left", padx=(0, 6))
         for b in (self.quarantine_button, self.upload_button):
             b.pack(side="right", padx=(6, 0))
@@ -226,6 +227,7 @@ class ScanWindow:
         self.vt_button.configure(state="normal" if r and self._report_link(r) else "disabled")
         self.open_button.configure(state="normal" if exists else "disabled")
         self.again_button.configure(state="normal" if exists else "disabled")
+        self.defender_button.configure(state="normal" if exists else "disabled")
         unseen = bool(r and r.file_report is not None and not r.file_report.analyzed)
         self.upload_button.configure(state="normal" if exists and unseen and self.scanner.vt else "disabled")
         self.quarantine_button.configure(state="normal" if exists and not r.action else "disabled")
@@ -279,6 +281,21 @@ class ScanWindow:
                 self._update_summary()
 
             self._ui.put(done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _ask_defender(self) -> None:
+        """Second opinion: Defender scans the file now and only reports (it's told not to act)."""
+        _, r = self._selected()
+        if r is None:
+            return
+        self.defender_button.configure(state="disabled")
+        self.detail.add(("Defender", "Scanning...", None))
+
+        def work():
+            scan = defender.scan_file(r.path)
+            tag = "malicious" if scan.clean is False else "clean" if scan.clean else None
+            self._ui.put(lambda: (self.detail.add(("Defender", scan.message, tag)), self._set_buttons(r)))
 
         threading.Thread(target=work, daemon=True).start()
 

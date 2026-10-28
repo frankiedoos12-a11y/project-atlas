@@ -142,7 +142,16 @@ def check_running(scanner: Scanner, include_dlls: bool = False, progress: Callab
         return report
     say = progress or (lambda text: None)
     say("Listing running programs...")
-    report.files, report.unreadable = running_files(include_dlls)
+    files, report.unreadable = running_files(include_dlls)
+    report.files = judge_files(scanner, files, say, cancel)
+    return report
+
+
+def judge_files(scanner: Scanner, files: list[RunningFile], progress: Callable[[str], None] | None = None,
+                cancel: threading.Event | None = None) -> list[RunningFile]:
+    """Hash and look up each file, then let valid signatures vouch for unknown ones and explain away
+    lone detections. Returns the checked files, worst first."""
+    say = progress or (lambda text: None)
     done = 0
 
     def run(item: RunningFile) -> None:
@@ -151,17 +160,17 @@ def check_running(scanner: Scanner, include_dlls: bool = False, progress: Callab
             return
         _look_up(scanner, item)
         done += 1
-        say(f"Checked {done} of {len(report.files)} files...")
+        say(f"Checked {done} of {len(files)} files...")
 
     with ThreadPoolExecutor(WORKERS) as pool:
-        list(pool.map(run, report.files))
-    report.files = [f for f in report.files if f.result]  # cancelled ones drop out
+        list(pool.map(run, files))
+    files = [f for f in files if f.result]  # cancelled ones drop out
 
     # Files VirusTotal has no results for: a valid signature from a known publisher vouches for them.
-    unseen = [f for f in report.files if f.result.verdict is Verdict.CLEAN and f.result.file_report
+    unseen = [f for f in files if f.result.verdict is Verdict.CLEAN and f.result.file_report
               and not f.result.file_report.analyzed]
     # A lone detection or two on an installed, signed program (VMware, HP, ...) is nearly always a false alarm.
-    lone = [f for f in report.files if f.result.verdict is Verdict.SUSPICIOUS and _lone_detection(scanner, f)]
+    lone = [f for f in files if f.result.verdict is Verdict.SUSPICIOUS and _lone_detection(scanner, f)]
     if unseen or lone:
         say("Checking signatures...")
         signatures = check_signatures([f.path for f in unseen + lone])
@@ -181,12 +190,12 @@ def check_running(scanner: Scanner, include_dlls: bool = False, progress: Callab
             else:
                 f.result.raise_to(Verdict.UNKNOWN, "VirusTotal has never seen this file, and it is not validly "
                                                    "signed. Worth a look if you don't recognise it")
-    for f in report.files:
+    for f in files:
         r = f.result
         if not r.reasons and r.file_report and r.file_report.analyzed:
             r.reasons.append(f"No engines flagged it ({r.file_report.total} checked)")
-    report.files.sort(key=lambda f: (-f.verdict.rank, f.kind != "program", f.path.name.lower()))
-    return report
+    files.sort(key=lambda f: (-f.verdict.rank, f.kind != "program", f.path.name.lower()))
+    return files
 
 
 def _lone_detection(scanner: Scanner, item: RunningFile) -> bool:
@@ -194,6 +203,80 @@ def _lone_detection(scanner: Scanner, item: RunningFile) -> bool:
     rep = item.result.file_report
     return bool(rep and rep.malicious + rep.suspicious <= 2 and rep.malicious < scanner.settings.malicious_threshold
                 and not rep.sandbox)
+
+
+class NewProgramWatcher:
+    """Looks up each program the moment it starts (checked every couple of seconds).
+
+    Speaks up only when a program that just started is malicious or suspicious. Each program
+    file is checked once until it changes, so everyday programs cost nothing after the first time.
+    Programs that open and close within a second or two can slip past: the hourly check and the
+    download guard cover those.
+    """
+
+    def __init__(self, scanner: Scanner, on_finding: Callable[[str, str, str | None], None], interval: float = 2.0):
+        self.scanner = scanner
+        self.on_finding = on_finding
+        self.interval = interval
+        self.paused = False
+        self.checked = 0
+        self._known_pids: set[int] = set()
+        self._seen_files: dict[str, tuple[int, float]] = {}  # path -> (size, mtime) when last checked
+        self._told: set[str] = set()
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        import psutil
+
+        self._known_pids = set(psutil.pids())  # already running: the hourly check covers those
+        while not self._stop.wait(self.interval):
+            try:
+                self.tick()
+            except Exception:  # never let one odd process end the watcher
+                log.exception("New-program check failed")
+
+    def tick(self) -> None:
+        import psutil
+
+        pids = set(psutil.pids())
+        new, self._known_pids = pids - self._known_pids, pids
+        if self.paused or self.scanner.vt is None or not new:
+            return
+        fresh: dict[str, RunningFile] = {}
+        for pid in new:
+            try:
+                p = psutil.Process(pid)
+                exe, name = p.exe(), p.name()
+            except (psutil.Error, OSError):
+                continue  # already gone, or off-limits
+            if not exe or not os.path.isabs(exe):
+                continue
+            key = os.path.normcase(exe)
+            try:
+                st = os.stat(exe)
+            except OSError:
+                continue
+            if self._seen_files.get(key) == (st.st_size, st.st_mtime):
+                continue
+            self._seen_files[key] = (st.st_size, st.st_mtime)
+            item = fresh.setdefault(key, RunningFile(Path(exe), "program"))
+            item.pids.add(pid)
+            item.used_by.add(name)
+        if not fresh:
+            return
+        for f in judge_files(self.scanner, list(fresh.values())):
+            self.checked += 1
+            r = f.result
+            if f.verdict not in (Verdict.MALICIOUS, Verdict.SUSPICIOUS) or r.sha256 in self._told:
+                continue
+            self._told.add(r.sha256)
+            log.warning("Program just started and is %s: %s (%s)", f.verdict.value, f.path, "; ".join(r.reasons))
+            link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+            self.on_finding(f"Atlas: {f.verdict.value} program just started",
+                            f"{f.path.name}\n{r.threat_text or r.reasons[0]}\nSee Running now to end it.", link)
 
 
 def end_processes(pids: set[int]) -> list[str]:

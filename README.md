@@ -137,28 +137,61 @@ Is anything bad running right now? The **Running now** tab answers it two ways. 
 
 The tray repeats both checks every hour (`running_check_minutes`; `0` = only when you ask) and pops up an alert the first time something flagged is running or being talked to. Unknown programs are listed in the tab rather than popped up. `atlas running` (`--dlls`) and `atlas network` do the same from the console.
 
+**New programs, as they start.** Between those hourly checks, the tray looks up each program the moment it starts and alerts you if VirusTotal flags it (`watch_new_programs`). Each program file is looked up once until it changes, so everyday programs cost no lookups after the first time.
+
+**Ask Defender.** Select a file in *Running now*, *Installed* or the right-click scan window and press **Ask Defender** for a second opinion from Microsoft Defender's own scanner. It only reports; Defender is told not to touch the file. `atlas second-opinion FILE` does the same.
+
+## 7. Protection: Defender and hijacked settings
+
+The **Protection** tab checks the settings malware and adware change so they can get in or steer your browsing:
+
+- **Defender.** Real-time protection, tamper protection, behaviour monitoring, how old the virus definitions are, and whether *Potentially unwanted app blocking* is on (it's off by default on many PCs, and it's the setting that stops adware and bundled junk). From Defender's own log for the last 30 days: exclusions that were added (malware's favourite way to hide), protection being switched off, tamper protection blocking a change, and what Defender found. Exclusions set by Windows policy are flagged too. If another antivirus is in charge, Atlas says so and leaves it alone.
+- **Browser start page and search engine**, for every Chrome, Edge, Brave, Opera and Firefox profile. Known hijackers (Genieo, Conduit, Trovi, OneLaunch...) and search sites that come through a "partner" code are flagged; unusual search engines and start pages are looked up on VirusTotal. Google, Bing, DuckDuckGo and the like are fine.
+- **Browser policies.** Settings forced by a policy can't be changed back in the browser. Home PCs normally have none.
+- **Proxy.** A proxy or proxy script routes your web traffic through someone else's server.
+- **Hosts file.** Lines that block security or update sites, or that send a site (your bank, say) to a different address.
+- **DNS servers.** Known public resolvers and your router are fine; anything else is looked up on VirusTotal, with its owner shown.
+
+Each problem has a button. Most open the right page in Windows Security, Settings or the browser, so you make the change. Atlas changes two things itself, after asking and with a backup saved in the `backups` folder first: it can turn off your account's proxy setting, and remove a browser policy set in your account. The hosts file opens in Notepad as administrator for you to edit.
+
+The tray re-runs these checks every hour (`system_check_minutes`) and pops up an alert when a new problem appears. The first run just notes what's already there; the tray menu shows how many things need a look. `atlas protection` prints the same list.
+
+## 8. Installed programs
+
+The **Installed** tab lists what's installed, the same list as *Settings > Apps*. Atlas looks up each program's main file on VirusTotal and recognises well-known adware and "potentially unwanted programs" by name (OneLaunch, Wave Browser, Web Companion, Restoro, PC optimisers...). When the engines' consensus is *adware* or *PUA*, it's shown as **UNWANTED** rather than malware: a nuisance that's best removed, not a break-in. **Uninstall...** runs the program's own uninstaller after asking you. `atlas installed` prints the list.
+
+## Updates and VirusTotal usage
+
+The window's header shows how many VirusTotal lookups Atlas has made today and this month (a free key allows 500 a day; answers Atlas already has don't count). `atlas quota` breaks it down.
+
+Once a day the tray checks GitHub for a newer version (`check_for_updates`). When there is one, it tells you, and in a copy set up by the installer the tray menu and the window's **Update now** button re-run the installer in a window you can watch. Settings, history and your key are kept. `atlas update` checks from the console, and `atlas update --now` updates.
+
 ## The Atlas window
 
-Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has seven tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has nine tabs:
 
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
 - **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
+- **Installed**: installed programs, with adware and unwanted software called out, and **Uninstall...** (see above).
+- **Protection**: Defender, browser start pages and search, proxy, hosts file and DNS, each with a fix button (see above).
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
 - **Cleanup**: finds junk and leftovers with no home (see below). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
 - **Browsers**: link checker, notification spam and extensions (see above).
 - **Quarantine**: files Atlas moved out of the way, with **Restore** (asks first).
 
-The header shows whether protection is running and whether your VirusTotal key is connected.
+The header shows whether protection is running, whether your VirusTotal key is connected, today's VirusTotal lookups, and when an update is available.
 
 ## The tray icon
 
 The globe is **blue** while protecting, **grey** while paused, and **red** after an alert (until you choose *Clear alert*). Left-click it to open the Atlas window, or right-click it for:
 
 - Open Project Atlas
+- *Protection: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
 - Pause protection
 - Check startup items now
 - Check running programs and network now
+- Check Defender, browsers and network settings now
 - Scan watched folders now
 - Check link on clipboard
 - Open activity log / quarantine folder / settings file
@@ -178,6 +211,11 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas autoruns` | Check everything set to start automatically (`--all` to include Microsoft items) |
 | `atlas running` | Check running programs with VirusTotal (`--dlls` to include loaded DLLs, `--all` to list clean ones too) |
 | `atlas network` | Check the internet addresses programs are connected to (`--all` to list clean ones too) |
+| `atlas protection` | Check Defender, browser start pages and search, proxy, hosts file and DNS (`--all` to list what's fine too) |
+| `atlas installed` | Check installed programs for adware and unwanted software (`--all` to list every program) |
+| `atlas second-opinion FILE...` | Ask Microsoft Defender to scan files (report only) |
+| `atlas quota` | VirusTotal lookups Atlas made today and this month |
+| `atlas update` | Check for a newer version (`--now` to update an installed copy) |
 | `atlas cleanup` | Report junk that can be removed (read-only; clean from the window) |
 | `atlas space` | Report duplicate and big files (read-only; act from the window) |
 | `atlas browsers` | List notification sites and extensions (read-only; act from the window) |
@@ -195,7 +233,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Where things live
 
-- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, startup-check and running-check intervals)
+- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running and Protection checks run, new-program alerts, update checks)
 - History, cache, quarantine, backups, log: `%LOCALAPPDATA%\ProjectAtlas\`
 - API key: Windows Credential Manager, entry `ProjectAtlas`
 

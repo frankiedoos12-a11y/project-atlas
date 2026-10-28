@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from atlas import __version__, browsers, config, network, processes, space
-from atlas.app import build_scanner, guard_running, launch_tray
+from atlas import __version__, browsers, config, defender, installed, network, processes, protection, space, updates
+from atlas.app import build_scanner, guard_running, launch_tray, vt_usage_text
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
 from atlas.links import check_link
@@ -165,6 +165,7 @@ def style_window(root: tk.Tk, scale: float) -> None:
     style.configure("Off.TLabel", foreground="#c62828", background="#ffffff", font=("Segoe UI", 10, "bold"))
     style.configure("Muted.TLabel", foreground="#666666", background="#ffffff")
     style.configure("Summary.TLabel", foreground="#444444")
+    style.configure("Update.TLabel", foreground="#1d4ed8", background="#ffffff", font=("Segoe UI", 10, "bold"))
 
 
 class AtlasWindow:
@@ -191,6 +192,8 @@ class AtlasWindow:
         self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 14))
         self.tabs.add(self._build_startup_tab(), text="  Startup items  ")
         self.tabs.add(self._build_running_tab(), text="  Running now  ")
+        self.tabs.add(self._build_installed_tab(), text="  Installed  ")
+        self.tabs.add(self._build_protection_tab(), text="  Protection  ")
         self.tabs.add(self._build_activity_tab(), text="  Activity  ")
         self.tabs.add(self._build_cleanup_tab(), text="  Cleanup  ")
         self.tabs.add(self._build_space_tab(), text="  Disk space  ")
@@ -247,8 +250,34 @@ class AtlasWindow:
         self.protection_label.pack(anchor="e")
         self.key_label = ttk.Label(right, style="Muted.TLabel")
         self.key_label.pack(anchor="e")
+        self.update_row = ttk.Frame(right, style="Header.TFrame")
+        self.update_label = ttk.Label(self.update_row, style="Update.TLabel")
+        self.update_label.pack(side="left")
+        self.update_button = ttk.Button(self.update_row, text="Update now", command=self._update_now)
         self.start_button = ttk.Button(right, text="Start protection", command=self._start_protection)
         self._update_header()
+        if self.settings.check_for_updates:
+            self.in_background(updates.latest_version, self._show_update)
+
+    def _show_update(self, latest) -> None:
+        if not latest or not updates.is_newer(latest):
+            return
+        self.update_label.configure(text=updates.update_hint(latest) + "  ")
+        if updates.install_kind() == "installer":
+            self.update_button.pack(side="left")
+        self.update_row.pack(anchor="e", pady=(4, 0))
+
+    def _update_now(self) -> None:
+        if not messagebox.askyesno(WINDOW_TITLE, "Update Project Atlas now?\n\nA PowerShell window opens and runs the "
+                                                 "installer: it closes Atlas, updates it and starts the tray again. "
+                                                 "Your settings, history and key are kept."):
+            return
+        try:
+            updates.start_update()
+        except (OSError, RuntimeError) as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc))
+            return
+        self.close()
 
     def _update_header(self) -> None:
         running = guard_running()
@@ -259,7 +288,7 @@ class AtlasWindow:
         else:
             self.protection_label.configure(text="●  Protection OFF", style="Off.TLabel")
             self.start_button.pack(anchor="e", pady=(4, 0))
-        self.key_label.configure(text="VirusTotal key: connected" if self.scanner.vt
+        self.key_label.configure(text=f"VirusTotal key: connected  ·  {vt_usage_text(self.store)}" if self.scanner.vt
                                  else "VirusTotal key: NOT SET (run atlas set-key)")
 
     def _start_protection(self) -> None:
@@ -1190,6 +1219,9 @@ class AtlasWindow:
         self.running_location.pack(side="left")
         self.running_end = ttk.Button(buttons, text="End program...", state="disabled", command=self._end_program)
         self.running_end.pack(side="left", padx=(6, 0))
+        self.running_defender = ttk.Button(buttons, text="Ask Defender", state="disabled",
+                                           command=lambda: self._ask_defender(self._running_path()))
+        self.running_defender.pack(side="left", padx=(6, 0))
         self.running_vt = ttk.Button(buttons, text="View on VirusTotal", state="disabled",
                                      command=lambda: self._running_link and webbrowser.open(self._running_link))
         self.running_vt.pack(side="right")
@@ -1206,7 +1238,7 @@ class AtlasWindow:
         programs = self.running_mode.get() == "programs"
         (self.network_table if programs else self.programs_table).pack_forget()
         (self.programs_table if programs else self.network_table).pack(fill="both", expand=True)
-        for button in (self.running_location, self.running_end, self.running_vt):
+        for button in (self.running_location, self.running_end, self.running_vt, self.running_defender):
             button.configure(state="disabled")
         if programs:
             self.dll_check.pack(side="right", padx=(0, 12))
@@ -1321,12 +1353,35 @@ class AtlasWindow:
             self.running_end.configure(state="normal" if item.connections else "disabled")
         self.running_detail.show(lines)
         self.running_vt.configure(state="normal" if self._running_link else "disabled")
+        self.running_defender.configure(state="normal" if self._running_path() else "disabled")
+
+    def _running_path(self) -> Path | None:
+        item = self._running_selected()
+        return item.path if isinstance(item, processes.RunningFile) else network.program_path(item) if item else None
 
     def _open_running_location(self) -> None:
-        item = self._running_selected()
-        path = item.path if isinstance(item, processes.RunningFile) else network.program_path(item) if item else None
+        path = self._running_path()
         if path:
             open_in_explorer(path)
+
+    def _ask_defender(self, path: Path | None) -> None:
+        """Second opinion: Defender scans the file now and only reports (it's told not to act)."""
+        if not path:
+            return
+        self.root.configure(cursor="watch")
+
+        def done(scan) -> None:
+            self.root.configure(cursor="")
+            if scan is None:
+                return
+            if scan.clean is False:
+                messagebox.showwarning(WINDOW_TITLE, f"{path.name}\n\n{scan.message}.\n\nDefender was told only to "
+                                                     "report, not to act. Open Windows Security to remove it, or use "
+                                                     "Atlas's quarantine.")
+            else:
+                messagebox.showinfo(WINDOW_TITLE, f"{path.name}\n\n{scan.message}.")
+
+        self.in_background(lambda: defender.scan_file(path), done)
 
     def _end_program(self) -> None:
         item = self._running_selected()
@@ -1345,6 +1400,204 @@ class AtlasWindow:
         if problems:
             messagebox.showwarning(WINDOW_TITLE, "\n".join(problems))
         self.check_running()
+
+    # --- Installed programs -------------------------------------------------------
+
+    def _build_installed_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.installed_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
+                                           text="Click Check now to look up every installed program with VirusTotal "
+                                                "and spot adware and other potentially unwanted programs.")
+        self.installed_summary.pack(side="left", fill="x", expand=True)
+        self.installed_button = ttk.Button(bar, text="Check now", command=self.check_installed)
+        self.installed_button.pack(side="right")
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+        self.installed_table = Table(panes, [("verdict", "Status", 110), ("name", "Program", 330),
+                                             ("publisher", "Publisher", 200), ("date", "Installed", 100),
+                                             ("size", "Size", 80), ("details", "Details", 420)],
+                                     self._show_installed_row, self.scale)
+        self.installed_table.tree.tag_configure("unwanted", foreground=VERDICT_COLORS["suspicious"])
+        panes.add(self.installed_table, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.installed_uninstall = ttk.Button(buttons, text="Uninstall...", state="disabled",
+                                              command=self._uninstall)
+        self.installed_uninstall.pack(side="left")
+        self.installed_location = ttk.Button(buttons, text="Open file location", state="disabled",
+                                             command=lambda: self._installed_file() and
+                                             open_in_explorer(self._installed_file()))
+        self.installed_location.pack(side="left", padx=(6, 0))
+        self.installed_defender = ttk.Button(buttons, text="Ask Defender", state="disabled",
+                                             command=lambda: self._ask_defender(self._installed_file()))
+        self.installed_defender.pack(side="left", padx=(6, 0))
+        self.installed_vt = ttk.Button(buttons, text="View on VirusTotal", state="disabled",
+                                       command=lambda: self._installed_link and webbrowser.open(self._installed_link))
+        self.installed_vt.pack(side="right")
+        self.installed_detail = DetailBox(lower)
+        self.installed_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=1)
+        self.installed_programs: dict = {}
+        self._installed_link: str | None = None
+        return tab
+
+    def check_installed(self) -> None:
+        self.installed_button.configure(state="disabled")
+
+        def progress(text: str) -> None:
+            self._ui_queue.put(lambda: self.installed_summary.configure(text=text))
+
+        def done(programs) -> None:
+            self.installed_button.configure(state="normal")
+            if programs is None:
+                return
+            self.installed_programs = {str(i): p for i, p in enumerate(programs)}
+            self.installed_table.replace([
+                (iid, (p.status, p.name, p.publisher or "-", p.installed_on or "-",
+                       f"{p.size_mb:,.0f} MB" if p.size_mb else "-", p.reasons[0] if p.reasons else ""),
+                 ("unwanted",) if p.status == "UNWANTED" else (p.verdict.value,))
+                for iid, p in self.installed_programs.items()])
+            look = sum(1 for p in programs if p.verdict is not Verdict.CLEAN)
+            checked = sum(1 for p in programs if p.file and p.file.result)
+            self.installed_summary.configure(
+                text=f"{len(programs)} programs installed, {checked} looked up on VirusTotal: {look} need a look"
+                     + ("" if self.scanner.vt else "  ·  No VirusTotal key, so only names were checked"))
+
+        progress("Starting...")
+        self.in_background(lambda: installed.check_installed(self.scanner, progress), done)
+
+    def _selected_program(self):
+        return self.installed_programs.get(self.installed_table.selection() or "")
+
+    def _installed_file(self) -> Path | None:
+        p = self._selected_program()
+        return p.file.path if p and p.file else None
+
+    def _show_installed_row(self, iid: str) -> None:
+        p = self._selected_program()
+        if p is None:
+            return
+        v = p.verdict.value
+        lines = [("Status", p.status, v), ("Program", f"{p.name}  {p.version}".strip(), None),
+                 ("Publisher", p.publisher or "(none given)", None), ("For", p.scope, None)]
+        if p.installed_on:
+            lines.append(("Installed", f"{p.installed_on} (or last updated)", None))
+        if p.file:
+            lines.append(("Program file", str(p.file.path), None))
+            if p.file.result and p.file.result.signer_text:
+                lines.append(("Publisher", p.file.result.signer_text, None))
+        lines += [("Why", r, None) for r in p.reasons]
+        if p.file and p.file.result:
+            lines += threat_lines(p.file.result)
+        self.installed_detail.show(lines)
+        report = p.file.result.file_report if p.file and p.file.result else None
+        self._installed_link = report.gui_link if report and report.found else None
+        self.installed_vt.configure(state="normal" if self._installed_link else "disabled")
+        self.installed_uninstall.configure(state="normal" if p.uninstall else "disabled")
+        for button in (self.installed_location, self.installed_defender):
+            button.configure(state="normal" if p.file else "disabled")
+
+    def _uninstall(self) -> None:
+        p = self._selected_program()
+        if p is None:
+            return
+        if not messagebox.askyesno(WINDOW_TITLE, f"Uninstall {p.name}?\n\nAtlas starts the program's own uninstaller. "
+                                                 "Windows may ask for permission. Watch its screens: some adware "
+                                                 "uninstallers try to talk you out of it or offer \"deals\".",
+                                   icon="warning"):
+            return
+        try:
+            installed.run_uninstaller(p)
+        except OSError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc))
+            return
+        messagebox.showinfo(WINDOW_TITLE, "The uninstaller has started. When it's finished, click Check now to "
+                                          "refresh the list.")
+
+    # --- Protection: Defender and hijacks ------------------------------------------------
+
+    def _build_protection_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.protection_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
+                                            text="Is Defender on and untouched, and has anything changed your "
+                                                 "browser, proxy, hosts file or DNS? Click Check now.")
+        self.protection_summary.pack(side="left", fill="x", expand=True)
+        self.protection_button = ttk.Button(bar, text="Check now", command=self.check_protection)
+        self.protection_button.pack(side="right")
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+        self.protection_table = Table(panes, [("verdict", "Status", 120), ("area", "Area", 200),
+                                              ("details", "Finding", 760)], self._show_protection_row, self.scale)
+        self.protection_table.tree.tag_configure("warn", foreground=VERDICT_COLORS["suspicious"])
+        self.protection_table.tree.tag_configure("note", foreground="#444444")
+        self.protection_table.tree.tag_configure("ok", foreground=VERDICT_COLORS["clean"])
+        panes.add(self.protection_table, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.protection_fix = ttk.Button(buttons, text="Fix...", state="disabled", command=self._fix_finding)
+        self.protection_fix.pack(side="left")
+        self.protection_vt = ttk.Button(buttons, text="View on VirusTotal", state="disabled",
+                                        command=lambda: self._protection_link and webbrowser.open(self._protection_link))
+        self.protection_vt.pack(side="right")
+        self.protection_detail = DetailBox(lower)
+        self.protection_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=1)
+        self.protection_findings: dict = {}
+        self._protection_link: str | None = None
+        return tab
+
+    def check_protection(self) -> None:
+        self.protection_button.configure(state="disabled")
+        self.protection_summary.configure(text="Checking Defender, browsers, proxy, hosts file and DNS...")
+
+        def done(findings) -> None:
+            self.protection_button.configure(state="normal")
+            if findings is None:
+                return
+            self.protection_findings = {str(i): f for i, f in enumerate(findings)}
+            label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
+            self.protection_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
+                                           for iid, f in self.protection_findings.items()])
+            look = sum(1 for f in findings if f.needs_look)
+            self.protection_summary.configure(text=f"{len(findings)} checks: {look} need a look" if look
+                                              else f"{len(findings)} checks: nothing needs a look")
+            self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
+
+        self.in_background(lambda: protection.check_system(self.scanner), done)
+
+    def _show_protection_row(self, iid: str) -> None:
+        f = self.protection_findings.get(iid)
+        if f is None:
+            return
+        tag = {"warn": "suspicious", "ok": "clean"}.get(f.level)
+        lines = [("Status", {"warn": "Needs a look", "note": "Note", "ok": "OK"}.get(f.level, f.level), tag),
+                 ("Area", f.area, None), ("Finding", f.title, None)] + [("Why", d, None) for d in f.details]
+        self.protection_detail.show(lines)
+        self._protection_link = f.vt_link
+        self.protection_vt.configure(state="normal" if f.vt_link else "disabled")
+        self.protection_fix.configure(text=f.fix_label or "Fix...", state="normal" if f.fix else "disabled")
+
+    def _fix_finding(self) -> None:
+        f = self.protection_findings.get(self.protection_table.selection() or "")
+        if f is None or not f.fix:
+            return
+        question = protection.describe_fix(f)
+        if question and not messagebox.askyesno(WINDOW_TITLE, question):
+            return
+        try:
+            message = protection.apply_fix(f)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(WINDOW_TITLE, f"That didn't work:\n\n{exc}")
+            return
+        if message:
+            messagebox.showinfo(WINDOW_TITLE, message)
+            self.check_protection()
 
     def _build_quarantine_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self.tabs, padding=10)

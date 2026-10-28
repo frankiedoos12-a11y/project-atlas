@@ -35,7 +35,37 @@ def build_scanner(settings: config.Settings) -> tuple[Scanner, Store]:
     store = Store(data / "atlas.db")
     key = config.get_api_key()
     vt = VTClient(key) if key else None
+    if vt:
+        vt.on_request = store.count_vt_request
     return Scanner(settings, store, vt, data), store
+
+
+USAGE_KINDS = {"files": "files", "urls": "links", "domains": "sites", "ip_addresses": "addresses",
+               "uploads": "uploads"}
+
+
+def vt_usage(store: Store) -> dict:
+    """Atlas's own VirusTotal requests today and this month (all of Atlas on this PC: tray, window, helpers).
+
+    VirusTotal doesn't let this key read the account's quota, so this counts what Atlas sends.
+    Cached answers aren't counted: they never reach VirusTotal.
+    """
+    from datetime import date
+
+    today = date.today()
+    day = store.vt_usage(today.isoformat())
+    month = store.vt_usage(today.replace(day=1).isoformat())
+    return {"today": sum(r for r, _ in day.values()), "month": sum(r for r, _ in month.values()),
+            "throttled_today": sum(t for _, t in day.values()),
+            "today_by_kind": {USAGE_KINDS.get(k, k): r for k, (r, _) in sorted(day.items(), key=lambda x: -x[1][0])}}
+
+
+def vt_usage_text(store: Store) -> str:
+    u = vt_usage(store)
+    text = f"{u['today']:,} VirusTotal lookups today, {u['month']:,} this month"
+    if u["throttled_today"]:
+        text += f" ({u['throttled_today']} slowed down by VirusTotal's rate limit)"
+    return text
 
 
 def watch_folders(settings: config.Settings) -> list[Path]:

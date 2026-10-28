@@ -20,6 +20,7 @@ from atlas.app import build_scanner, claim_single_instance, launch_gui, log_file
 from atlas.autoruns import Autorun, AutorunMonitor
 from atlas.links import check_link, read_clipboard
 from atlas.notify import notify_autorun, toast
+from atlas.processes import NewProgramWatcher
 from atlas.quarantine import quarantine_dir
 from atlas.scanner import ScanResult, Verdict
 from atlas.watcher import DownloadGuard
@@ -93,6 +94,61 @@ class RunningMonitor:
                                 f"{c.reasons[0] if c.reasons else ''}", link)
 
 
+class SystemMonitor:
+    """Re-runs the Protection checks (Defender, browser hijacks, proxy, hosts file, DNS) every so often.
+
+    Alerts when a problem appears that wasn't there before. The very first run only records what's
+    already there (it's listed in the Protection tab and the tray menu, without a pop-up for each).
+    """
+
+    def __init__(self, scanner, store, minutes: int, on_finding: Callable[[str, str, str | None], None]):
+        self.scanner, self.store = scanner, store
+        self.interval = minutes * 60
+        self.on_finding = on_finding
+        self.paused = False
+        self.needs_look = 0
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        delay = 180
+        while True:
+            asked = self._wake.wait(delay if self.interval else None)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            if asked or not self.paused:
+                self.check()
+            delay = self.interval
+
+    def check_now(self) -> None:
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+
+    def check(self) -> None:
+        from atlas.protection import check_system
+
+        try:
+            findings = check_system(self.scanner)
+        except Exception:
+            log.exception("System check failed")
+            return
+        warnings = [f for f in findings if f.needs_look and f.key]
+        self.needs_look = len(warnings)
+        first_run = not self.store.has_seen_findings()
+        fresh = set(self.store.new_findings(["system:checked"] + [f.key for f in warnings]))
+        if first_run:
+            log.info("First system check: %d thing(s) need a look", len(warnings))
+            return
+        for f in warnings:
+            if f.key in fresh:
+                log.warning("New system finding: [%s] %s", f.area, f.title)
+                self.on_finding(f"Atlas: {f.area}", f"{f.title}\n{f.details[0] if f.details else ''}", f.vt_link)
+
+
 STATE_COLORS = {"ok": (37, 99, 235), "paused": (120, 120, 120), "alert": (220, 38, 38)}
 
 
@@ -121,6 +177,12 @@ class AtlasTray:
             self.monitor = AutorunMonitor(self.scanner, self.store, self.settings.autorun_check_minutes,
                                           self._on_autorun)
         self.running = RunningMonitor(self.scanner, self.settings.running_check_minutes, self._on_running_finding)
+        self.system = SystemMonitor(self.scanner, self.store, self.settings.system_check_minutes,
+                                    self._on_running_finding)
+        self.new_programs = NewProgramWatcher(self.scanner, self._on_running_finding) \
+            if self.settings.watch_new_programs else None
+        self.update_available: str | None = None
+        self._update_stop = threading.Event()
         self.alert: str | None = None
         self.busy: str | None = None
         self.icon = pystray.Icon("ProjectAtlas", make_icon("ok"), "Project Atlas", menu=self._menu())
@@ -135,10 +197,15 @@ class AtlasTray:
             item(lambda _: self._status(), None, enabled=False),
             item(lambda _: f"Alert: {self.alert}", None, enabled=False, visible=lambda _: self.alert is not None),
             item("Clear alert", self._clear_alert, visible=lambda _: self.alert is not None),
+            item(lambda _: f"Protection: {self.system.needs_look} thing(s) need a look", lambda: launch_gui(),
+                 visible=lambda _: self.system.needs_look > 0),
+            item(lambda _: f"Update to Project Atlas {self.update_available}", self._update,
+                 visible=lambda _: self.update_available is not None),
             pystray.Menu.SEPARATOR,
             item("Pause protection", self._toggle_pause, checked=lambda _: self.guard.paused),
             item("Check startup items now", self._check_autoruns, enabled=lambda _: self.monitor is not None),
             item("Check running programs and network now", self._check_running),
+            item("Check Defender, browsers and network settings now", self._check_system),
             item("Scan watched folders now", self._scan_folders, enabled=lambda _: self.busy is None),
             item("Check link on clipboard", self._check_clipboard_link),
             pystray.Menu.SEPARATOR,
@@ -194,6 +261,33 @@ class AtlasTray:
 
     # --- Actions -------------------------------------------------------------
 
+    def _check_system(self, icon, item) -> None:
+        self.system.check_now()
+        toast("Atlas: checking Defender, browsers and network settings",
+              "You'll hear back if something new needs a look. The Protection tab shows everything.")
+
+    def _watch_for_updates(self) -> None:
+        from atlas import updates
+
+        delay = 300  # not during sign-in
+        while not self._update_stop.wait(delay):
+            delay = 24 * 3600
+            latest = updates.latest_version()
+            if latest and updates.is_newer(latest) and latest != self.update_available:
+                self.update_available = latest
+                log.info("Update available: %s", latest)
+                toast("Atlas: update available", updates.update_hint(latest) +
+                      (" Right-click the globe to update." if updates.install_kind() == "installer" else ""))
+                self._refresh()
+
+    def _update(self, icon, item) -> None:
+        from atlas import updates
+
+        try:
+            updates.start_update()  # its window stops this tray, updates and starts the new one
+        except (OSError, RuntimeError) as exc:
+            toast("Atlas: couldn't update", str(exc))
+
     def _check_running(self, icon, item) -> None:
         self.running.check_now()
         toast("Atlas: checking running programs and connections",
@@ -208,6 +302,9 @@ class AtlasTray:
         if self.monitor:
             self.monitor.paused = self.guard.paused
         self.running.paused = self.guard.paused
+        self.system.paused = self.guard.paused
+        if self.new_programs:
+            self.new_programs.paused = self.guard.paused
         log.info("Protection %s", "paused" if self.guard.paused else "resumed")
         self._refresh()
 
@@ -270,6 +367,10 @@ class AtlasTray:
         if self.monitor:
             self.monitor.stop()
         self.running.stop()
+        self.system.stop()
+        if self.new_programs:
+            self.new_programs.stop()
+        self._update_stop.set()
         icon.stop()
 
     # --- Running -------------------------------------------------------------
@@ -280,6 +381,11 @@ class AtlasTray:
         if self.monitor:
             threading.Thread(target=self.monitor.run, name="autorun-monitor", daemon=True).start()
         threading.Thread(target=self.running.run, name="running-monitor", daemon=True).start()
+        threading.Thread(target=self.system.run, name="system-monitor", daemon=True).start()
+        if self.new_programs:
+            threading.Thread(target=self.new_programs.run, name="new-programs", daemon=True).start()
+        if self.settings.check_for_updates:
+            threading.Thread(target=self._watch_for_updates, name="updates", daemon=True).start()
         log.info("Project Atlas %s tray started", __version__)
         self._refresh()
 

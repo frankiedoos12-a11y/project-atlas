@@ -6,6 +6,12 @@
     atlas set-key              store your VirusTotal API key in Windows Credential Manager
     atlas scan FILE...         scan files right now
     atlas autoruns             check everything set to start automatically
+    atlas running / network    check running programs / internet connections
+    atlas protection           check Defender, browser start/search pages, proxy, hosts file, DNS
+    atlas installed            check installed programs for adware and unwanted software
+    atlas second-opinion FILE  ask Microsoft Defender to scan a file too
+    atlas quota                VirusTotal lookups used today and this month
+    atlas update [--now]       check GitHub for a newer version
     atlas history              show recent scans
     atlas quarantine           list quarantined files
     atlas restore ID           put a quarantined file back
@@ -366,6 +372,99 @@ def cmd_network(args) -> int:
     return 2 if report.flagged else 0
 
 
+def cmd_protection(args) -> int:
+    """Defender settings and history, browser start/search pages, proxy, hosts file and DNS. Read-only."""
+    from atlas.protection import check_system
+
+    scanner, store = build_scanner(config.Settings.load())
+    findings = check_system(scanner)
+    labels = {"warn": "[LOOK]   ", "note": "[NOTE]   ", "ok": "[OK]     "}
+    for f in findings:
+        if not args.all and f.level == "ok":
+            continue
+        print(f"{labels.get(f.level, '')} {f.area}: {f.title}")
+        for line in f.details:
+            print(f"           - {line}")
+        if f.fix_label:
+            print(f"           Fix in the Protection tab: {f.fix_label}")
+    flagged = [f for f in findings if f.needs_look]
+    print(f"\n{len(findings)} checks: {len(flagged)} need a look."
+          + ("" if args.all else " Add --all to list everything."))
+    store.close()
+    return 2 if flagged else 0
+
+
+def cmd_installed(args) -> int:
+    """Look up installed programs' main files and point out known unwanted software. Read-only."""
+    from atlas.installed import check_installed
+
+    scanner, store = build_scanner(config.Settings.load())
+    live = sys.stdout.isatty()
+    programs = check_installed(scanner,
+                               progress=(lambda t: print(f"\r{t[:60]:<60}", end="", flush=True)) if live else None)
+    if live:
+        print("\r" + " " * 60 + "\r", end="")
+    flagged = [p for p in programs if p.verdict in (Verdict.MALICIOUS, Verdict.SUSPICIOUS) or p.concerns]
+    for p in programs if args.all else flagged:
+        print(f"[{p.status:<10}] {p.name}" + (f"  ({p.publisher})" if p.publisher else ""))
+        for reason in p.reasons:
+            print(f"           - {reason}")
+    print(f"\n{len(programs)} programs installed: {len(flagged)} need a look."
+          + (" Uninstall them from the Installed tab or Windows Settings." if flagged else "")
+          + ("" if args.all else " Add --all to list everything."))
+    store.close()
+    return 2 if flagged else 0
+
+
+def cmd_second_opinion(args) -> int:
+    """Ask Microsoft Defender to scan a file (it reports only; nothing is removed)."""
+    from atlas.defender import scan_file
+
+    worst = 0
+    for name in args.paths:
+        scan = scan_file(Path(name))
+        label = "[CLEAN]    " if scan.clean else "[THREAT]   " if scan.clean is False else "[ERROR]    "
+        print(f"{label} {name}: {scan.message}")
+        worst = max(worst, 2 if scan.clean is False else 1 if scan.clean is None else 0)
+    return worst
+
+
+def cmd_quota(args) -> int:
+    """Atlas's own VirusTotal requests today and this month."""
+    from atlas.app import vt_usage
+
+    store = Store(config.data_dir() / "atlas.db")
+    u = vt_usage(store)
+    store.close()
+    print(f"VirusTotal lookups today: {u['today']:,}   this month: {u['month']:,}")
+    if u["throttled_today"]:
+        print(f"Slowed down by VirusTotal's rate limit today: {u['throttled_today']}")
+    for kind, n in u["today_by_kind"].items():
+        print(f"  {kind}: {n:,}")
+    print("Cached answers don't count. A free VirusTotal key allows 500 lookups a day and 4 a minute.")
+    return 0
+
+
+def cmd_update(args) -> int:
+    """Tell whether a newer Atlas is on GitHub, and with --now start updating."""
+    from atlas import updates
+
+    latest = updates.latest_version()
+    if latest is None:
+        print("Couldn't reach GitHub to check for updates.")
+        return 1
+    if not updates.is_newer(latest):
+        print(f"Project Atlas {__version__} is the newest version.")
+        return 0
+    print(updates.update_hint(latest))
+    if args.now:
+        updates.start_update()
+        print("Updating in a new window.")
+    elif updates.install_kind() == "installer":
+        print("Run `atlas update --now` to update.")
+    return 0
+
+
 def cmd_history(args) -> int:
     store = Store(config.data_dir() / "atlas.db")
     for row in reversed(store.recent_scans(args.limit)):
@@ -508,6 +607,26 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("network", help="check what programs are connected to (read-only)")
     p.add_argument("--all", action="store_true", help="list clean addresses too")
     p.set_defaults(func=cmd_network)
+
+    p = sub.add_parser("protection", aliases=["system"],
+                       help="check Defender, browser start/search pages, proxy, hosts file and DNS (read-only)")
+    p.add_argument("--all", action="store_true", help="also list what's fine")
+    p.set_defaults(func=cmd_protection)
+
+    p = sub.add_parser("installed", aliases=["programs"], help="check installed programs (read-only)")
+    p.add_argument("--all", action="store_true", help="list every program, not only the ones to look at")
+    p.set_defaults(func=cmd_installed)
+
+    p = sub.add_parser("second-opinion", aliases=["defender"], help="ask Microsoft Defender to scan files")
+    p.add_argument("paths", nargs="+")
+    p.set_defaults(func=cmd_second_opinion)
+
+    sub.add_parser("quota", aliases=["usage"], help="VirusTotal lookups used today and this month"
+                   ).set_defaults(func=cmd_quota)
+
+    p = sub.add_parser("update", help="check GitHub for a newer version")
+    p.add_argument("--now", action="store_true", help="update right away (installed copies)")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("history", help="show recent scans")
     p.add_argument("-n", "--limit", type=int, default=20)

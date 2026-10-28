@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS vt_extra (
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (kind, target)
 );
+CREATE TABLE IF NOT EXISTS vt_usage (
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    throttled INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, kind)
+);
+CREATE TABLE IF NOT EXISTS seen_findings (
+    key TEXT PRIMARY KEY,
+    first_seen TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS scans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scanned_at TEXT NOT NULL,
@@ -142,6 +153,40 @@ class Store:
                 "INSERT OR REPLACE INTO vt_extra (kind, target, data, fetched_at) VALUES (?, ?, ?, ?)",
                 (kind, target, json.dumps(data), _now().isoformat()),
             )
+
+    # --- VirusTotal usage (the quota meter) ----------------------------------
+
+    def count_vt_request(self, kind: str, status: int) -> None:
+        """One request Atlas sent to VirusTotal, counted per local day and kind ("files", "domains", ...)."""
+        day = datetime.now().strftime("%Y-%m-%d")
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO vt_usage (day, kind, requests, throttled) VALUES (?, ?, 1, ?)"
+                " ON CONFLICT(day, kind) DO UPDATE SET requests = requests + 1, throttled = throttled + excluded.throttled",
+                (day, kind, int(status == 429)))
+
+    def vt_usage(self, since_day: str) -> dict[str, tuple[int, int]]:
+        """kind -> (requests, of which throttled) from since_day (YYYY-MM-DD) on."""
+        with self._lock:
+            rows = self._conn.execute("SELECT kind, SUM(requests), SUM(throttled) FROM vt_usage WHERE day >= ?"
+                                      " GROUP BY kind", (since_day,)).fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+
+    # --- Findings already reported (system checks) -----------------------------
+
+    def new_findings(self, keys: list[str]) -> list[str]:
+        """Which of these keys haven't been seen before. Records them all as seen."""
+        now = _now().isoformat()
+        with self._lock, self._conn:
+            seen = {r[0] for r in self._conn.execute("SELECT key FROM seen_findings")}
+            fresh = [k for k in dict.fromkeys(keys) if k not in seen]
+            self._conn.executemany("INSERT OR IGNORE INTO seen_findings (key, first_seen) VALUES (?, ?)",
+                                   [(k, now) for k in fresh])
+        return fresh
+
+    def has_seen_findings(self) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT 1 FROM seen_findings LIMIT 1").fetchone() is not None
 
     # --- Scan history -----------------------------------------------------
 

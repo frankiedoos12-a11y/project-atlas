@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,7 @@ class Report:
     categories: list[str] = field(default_factory=list)  # site: security vendors' categories
     popularity: int | None = None  # site: best current rank in a popularity list (1 = most visited)
     threat_names: list[str] = field(default_factory=list)  # file: malware family names, e.g. "remcos"
+    threat_kinds: list[str] = field(default_factory=list)  # file: e.g. "trojan", "adware", "pua"
     sandbox: list[str] = field(default_factory=list)  # file: sandboxes that called it bad, and why
     rules: list[str] = field(default_factory=list)  # file: detection rules it matched
     owner: str | None = None  # IP address: the network that owns it, and its country
@@ -98,6 +100,7 @@ class Report:
             categories=_unique(attrs.get("categories", {}).values()),
             popularity=_best_rank(attrs.get("popularity_ranks") or {}),
             threat_names=_unique([n["value"] for n in threat.get("popular_threat_name") or []] + families),
+            threat_kinds=_unique(n["value"] for n in threat.get("popular_threat_category") or []),
             sandbox=sandbox,
             rules=_unique(rules)[:8],
             owner=owner,
@@ -133,11 +136,21 @@ class VTClient:
         self.session = session or requests.Session()
         self.session.headers.update({"x-apikey": api_key, "accept": "application/json"})
         self.max_retries = max_retries
+        # Called with (kind, status) after every request, e.g. ("files", 200); used for the quota meter.
+        self.on_request: Callable[[str, int], None] | None = None
+
+    def _count(self, path: str, status: int) -> None:
+        if self.on_request:
+            try:
+                self.on_request(path.strip("/").split("/")[0], status)
+            except Exception:  # the meter must never break a lookup
+                pass
 
     def _get(self, path: str) -> dict | None:
         """GET a resource. Returns None when VirusTotal has never seen it."""
         for attempt in range(self.max_retries + 1):
             resp = self.session.get(f"{API_BASE}{path}", timeout=30)
+            self._count(path, resp.status_code)
             if resp.status_code == 404:
                 return None
             if resp.status_code == 429 and attempt < self.max_retries:
@@ -194,6 +207,7 @@ class VTClient:
             url = resp.json()["data"]
         with path.open("rb") as fh:
             resp = self.session.post(url, files={"file": (path.name, fh)}, timeout=300)
+        self._count("uploads", resp.status_code)
         if not resp.ok:
             raise VTError(f"Upload failed {resp.status_code}: {resp.text[:200]}")
         return resp.json()["data"]["id"]

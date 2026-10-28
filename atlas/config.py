@@ -124,6 +124,13 @@ class Settings:
     # Check running programs and network connections this often (0 = only when asked), and
     # alert when something flagged is running or being talked to.
     running_check_minutes: int = 60
+    # Look up each program the moment it starts, and alert if it's flagged.
+    watch_new_programs: bool = True
+    # Check Defender, browser start pages and search, proxy, hosts file and DNS this often (0 = only when
+    # asked), and alert when something new needs a look.
+    system_check_minutes: int = 60
+    # Look for a newer Project Atlas on GitHub once a day.
+    check_for_updates: bool = True
     # Disk space tab: where to look, and what counts as big or worth de-duplicating.
     space_scan_folders: list[str] = field(default_factory=lambda: [str(Path.home())])
     big_file_min_mb: int = 500
