@@ -4,6 +4,7 @@
 - Root certificates (atlas.certs)
 - Drivers and new services (atlas.drivers)
 - Programs listening for connections, and the firewall (atlas.listening)
+- Registry hiding places, password and security settings, and changes to them (atlas.registry)
 - Programs running from user folders, and programs hidden in other files (atlas.userpaths)
 - Google Threat Intelligence matches (atlas.gti), with a GTI key
 - Administrator-only checks, when a deep check has been run (atlas.deepcheck)
@@ -20,7 +21,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from atlas import certs, cmdlines, deepcheck, drivers, gti, history, listening, userpaths
+from atlas import certs, cmdlines, deepcheck, drivers, gti, history, listening, registry, userpaths
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.local_checks import check_signatures
 from atlas.processes import RunningFile, _hash, judge_files
@@ -113,6 +114,16 @@ def check_hunt(scanner: Scanner, progress: Callable[[str], None] | None = None,
     _part(firewall, "firewall", listening.firewall_findings)
     found += firewall
 
+    say("Checking the registry...")
+    reg_found: list[Finding] = []
+
+    def registry_part() -> list[Finding]:
+        findings, spots = registry.check_registry()
+        return findings + registry.watch_changes(scanner.store, spots)
+
+    _part(reg_found, "registry", registry_part)
+    found += reg_found
+
     say("Checking programs in user folders...")
     user_programs = userpaths.running_from_user_folders()
     signatures = check_signatures([p.path for p in user_programs if not p.hidden_stream])
@@ -133,6 +144,8 @@ def check_hunt(scanner: Scanner, progress: Callable[[str], None] | None = None,
     for p in user_programs:
         if not (signatures.get(str(p.path)) and signatures[str(p.path)].valid):
             want(str(p.path), "program", "User folders", "It runs from a user folder without a valid signature")
+    for f in reg_found:
+        want(f.data.get("path"), "program", f.area, f"The registry points to it: {f.title}")
     for r in services:
         want(drivers.image_path(r.get("path") or ""), "program", "Services", f"Installed as the service {r.get('name')}")
     if intel:

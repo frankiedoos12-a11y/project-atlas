@@ -176,6 +176,14 @@ A hash lookup can only judge files. The **Threat hunt** tab looks for what it ca
 - **Root certificates.** Every trusted root in your account and the machine is compared with Microsoft's own trusted-root list, which Windows keeps up to date. Known spying certificates (Superfish, eDellRoot...), certificates Microsoft has blocked and recently added unknown roots need a look. Antivirus web shields, debugging proxies and government roots (DoD InstallRoot) are named for what they are.
 - **Drivers and services.** Loaded drivers are matched against the [LOLDrivers](https://www.loldrivers.io) list of known-vulnerable and malicious drivers (downloaded weekly). Atlas also shows whether Microsoft's vulnerable driver blocklist and Memory integrity are on. Drivers and services installed in the last 30 days are flagged when they run a script or a program from a user folder, or an unsigned program from ProgramData.
 - **Open doors.** Programs accepting connections from the network, with remote-access tools (AnyDesk, TeamViewer, ScreenConnect, NetSupport...) called out. Atlas checks that Windows Firewall is on, and lists inbound firewall rules that let in programs from user folders, or programs that are gone.
+- **The registry.** The Startup items tab covers the Run keys, services, Winlogon and IFEO. The threat hunt reads the rest of the well-known hiding places and the settings attackers loosen, all without administrator rights:
+  - *Hijacks:* per-user COM objects that override a Windows component, COM scriptlets loaded from the web, administrator-prompt (UAC) bypass keys (`ms-settings`, `mscfile`, `Folder`, wsreset...) and changed `.exe`/`.lnk` file types
+  - *Other ways to start:* Command Processor AutoRun, Active Setup, AppInit and AppCert DLLs, silent process exit monitors, the crash debugger, netsh helpers, print monitors, time providers, the screensaver, logon scripts, the .NET profiler hook, the "Office test" DLL, and files in Word's and Excel's startup folders
+  - *Passwords:* unknown LSA authentication, security and notification packages (password filters), WDigest keeping passwords readable in memory, and whether LSA protection is on
+  - *Office:* "enable all macros", macros from the internet allowed by policy, Protected View switched off, and trusted locations in Downloads, the Desktop, Documents or a network share (Word, Excel, PowerPoint, Outlook and the rest, set by you or by a policy)
+  - *UAC and Remote Desktop:* UAC off or set to never ask, no secure desktop, and Remote Desktop on, especially without Network Level Authentication
+
+  Each finding says when its key last changed. Atlas also remembers every value it watches: when one appears or changes, the tray alerts you once and the change stays listed under "Registry changes" for a week. Files these keys point to are looked up on VirusTotal, and their hashes are matched against GTI.
 - **Programs in user folders.** Programs running from AppData, Temp, Downloads or ProgramData that aren't validly signed. These are louder when they run from Temp or Downloads or are less than a week old. Atlas also finds programs hidden in another file's invisible "alternate data stream".
 
 Programs these checks turn up are looked up on VirusTotal. With a VirusTotal Enterprise / Google Threat Intelligence key, every loaded driver is looked up too.
@@ -213,7 +221,7 @@ Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with
 - **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
 - **Installed**: installed programs, with adware and unwanted software called out, and **Uninstall...** (see above).
 - **Protection**: Defender, browser start pages and search, proxy, hosts file and DNS, each with a fix button (see above).
-- **Threat hunt**: command lines, root certificates, drivers, open ports, user-folder programs, threat-intel matches and the administrator deep check (see above).
+- **Threat hunt**: command lines, root certificates, drivers, open ports, registry hiding places and settings, user-folder programs, threat-intel matches and the administrator deep check (see above).
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
 - **Cleanup**: finds junk and leftovers with no home (see below). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
