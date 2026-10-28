@@ -20,12 +20,13 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from atlas import __version__, browsers, config, space
+from atlas import __version__, browsers, config, network, processes, space
 from atlas.app import build_scanner, guard_running, launch_tray
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
 from atlas.links import check_link
 from atlas.quarantine import quarantine_dir, restore_file
+from atlas.scanner import Verdict, threat_lines
 
 WINDOW_TITLE = "Project Atlas"
 
@@ -189,6 +190,7 @@ class AtlasWindow:
         self.tabs = ttk.Notebook(root)
         self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 14))
         self.tabs.add(self._build_startup_tab(), text="  Startup items  ")
+        self.tabs.add(self._build_running_tab(), text="  Running now  ")
         self.tabs.add(self._build_activity_tab(), text="  Activity  ")
         self.tabs.add(self._build_cleanup_tab(), text="  Cleanup  ")
         self.tabs.add(self._build_space_tab(), text="  Disk space  ")
@@ -1148,6 +1150,201 @@ class AtlasWindow:
         e = self.browser_exts.get(self.ext_table.selection() or "")
         if e is not None:
             browsers.open_extensions_page(e)
+
+    # --- Running now: programs and network ------------------------------------
+
+    def _build_running_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.running_mode = tk.StringVar(value="programs")
+        ttk.Radiobutton(bar, text="Programs", value="programs", variable=self.running_mode,
+                        command=self._show_running_mode).pack(side="left")
+        ttk.Radiobutton(bar, text="Network connections", value="network", variable=self.running_mode,
+                        command=self._show_running_mode).pack(side="left", padx=(12, 0))
+        self.running_button = ttk.Button(bar, text="Check now", command=self.check_running)
+        self.running_button.pack(side="right")
+        self.include_dlls = tk.BooleanVar(value=False)
+        self.dll_check = ttk.Checkbutton(bar, text="Include DLLs (slower the first time)", variable=self.include_dlls)
+        self.dll_check.pack(side="right", padx=(0, 12))
+        self.running_summary = ttk.Label(tab, style="Summary.TLabel", wraplength=int(1100 * self.scale))
+        self.running_summary.pack(fill="x", pady=(8, 6))
+
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True)
+        self.running_holder = ttk.Frame(panes)
+        self.programs_table = Table(self.running_holder, [("verdict", "Verdict", 100), ("name", "File", 260),
+                                                          ("kind", "Type", 80), ("used", "Used by", 220),
+                                                          ("details", "Details", 480)],
+                                    self._show_running_row, self.scale)
+        self.network_table = Table(self.running_holder, [("verdict", "Verdict", 100), ("address", "Address", 260),
+                                                         ("what", "Seen as", 120), ("programs", "Programs", 220),
+                                                         ("details", "Details", 440)],
+                                   self._show_running_row, self.scale)
+        panes.add(self.running_holder, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.running_location = ttk.Button(buttons, text="Open file location", state="disabled",
+                                           command=self._open_running_location)
+        self.running_location.pack(side="left")
+        self.running_end = ttk.Button(buttons, text="End program...", state="disabled", command=self._end_program)
+        self.running_end.pack(side="left", padx=(6, 0))
+        self.running_vt = ttk.Button(buttons, text="View on VirusTotal", state="disabled",
+                                     command=lambda: self._running_link and webbrowser.open(self._running_link))
+        self.running_vt.pack(side="right")
+        self.running_detail = DetailBox(lower)
+        self.running_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=1)
+        self.running_files: dict = {}
+        self.network_checks: dict = {}
+        self._running_link: str | None = None
+        self._show_running_mode()
+        return tab
+
+    def _show_running_mode(self) -> None:
+        programs = self.running_mode.get() == "programs"
+        (self.network_table if programs else self.programs_table).pack_forget()
+        (self.programs_table if programs else self.network_table).pack(fill="both", expand=True)
+        for button in (self.running_location, self.running_end, self.running_vt):
+            button.configure(state="disabled")
+        if programs:
+            self.dll_check.pack(side="right", padx=(0, 12))
+            self.running_summary.configure(text=self._programs_summary or
+                                           "Click Check now to look up every running program with VirusTotal.")
+            self.running_detail.show([("", "Is anything bad running right now? Atlas looks up the file behind every "
+                                           "running program, and optionally the DLLs they've loaded from outside "
+                                           "the Windows folder. Nothing is stopped unless you press End program.",
+                                       None)])
+        else:
+            self.dll_check.pack_forget()
+            self.running_summary.configure(text=self._network_summary or
+                                           "Click Check now to see which programs are talking to the internet.")
+            self.running_detail.show([("", "Which programs are connected to the internet right now, and is any of "
+                                           "them talking to a server VirusTotal knows is bad? Atlas only looks; "
+                                           "nothing is blocked.", None)])
+
+    _programs_summary = ""
+    _network_summary = ""
+
+    def check_running(self) -> None:
+        programs = self.running_mode.get() == "programs"
+        dlls = self.include_dlls.get()
+        self.running_button.configure(state="disabled")
+
+        def progress(text: str) -> None:
+            self._ui_queue.put(lambda: self.running_summary.configure(text=text))
+
+        def work():
+            if programs:
+                return processes.check_running(self.scanner, include_dlls=dlls, progress=progress)
+            return network.check_network(self.scanner, progress=progress)
+
+        def done(result) -> None:
+            self.running_button.configure(state="normal")
+            if result is None:
+                return
+            if programs:
+                self._fill_programs(result)
+            else:
+                self._fill_network(result)
+
+        progress("Starting...")
+        self.in_background(work, done)
+
+    def _fill_programs(self, report) -> None:
+        self.running_files = {str(i): f for i, f in enumerate(report.files)}
+        self.programs_table.replace([
+            (iid, (f.verdict.value.upper(), f.path.name, f.kind, ", ".join(sorted(f.used_by))[:80],
+                   f.result.reasons[0] if f.result.reasons else ""), (f.verdict.value,))
+            for iid, f in self.running_files.items()])
+        counts = Counter(f.verdict for f in report.files)
+        programs = sum(1 for f in report.files if f.kind == "program")
+        text = (f"{programs} programs" + (f" and {len(report.files) - programs} DLLs" if programs < len(report.files)
+                                          else "") + f" checked: {counts[Verdict.MALICIOUS]} malicious, "
+                f"{counts[Verdict.SUSPICIOUS]} suspicious, {counts[Verdict.UNKNOWN]} unknown")
+        if report.unreadable:
+            text += f"  ·  {report.unreadable} process(es) need administrator rights to look into"
+        self._programs_summary = "; ".join(report.errors) or text
+        self.running_summary.configure(text=self._programs_summary)
+
+    def _fill_network(self, report) -> None:
+        checks = report.addresses + report.sites
+        self.network_checks = {str(i): c for i, c in enumerate(checks)}
+        self.network_table.replace([
+            (iid, (c.verdict.value.upper(), c.target, "Connection" if c.kind == "ip" else "Looked up",
+                   ", ".join(c.programs) or "-", c.reasons[0] if c.reasons else ""), (c.verdict.value,))
+            for iid, c in self.network_checks.items()])
+        text = (f"{len(report.addresses)} internet addresses in use, {len(report.flagged)} flagged")
+        if report.sites:
+            text += f"  ·  {len(report.sites)} recently looked-up sites checked"
+        elif not report.dns_available:
+            text += ("  ·  Recently looked-up sites: Windows only shows that list to administrators on this PC, "
+                     "so only live connections were checked")
+        self._network_summary = "; ".join(report.errors) or text
+        self.running_summary.configure(text=self._network_summary)
+
+    def _running_selected(self):
+        if self.running_mode.get() == "programs":
+            return self.running_files.get(self.programs_table.selection() or "")
+        return self.network_checks.get(self.network_table.selection() or "")
+
+    def _show_running_row(self, iid: str) -> None:
+        item = self._running_selected()
+        if item is None:
+            return
+        if isinstance(item, processes.RunningFile):
+            r = item.result
+            v = r.verdict.value
+            lines = [("Verdict", v.upper(), v), ("File", str(item.path), None), ("Type", item.kind, None),
+                     ("Used by", ", ".join(sorted(item.used_by)), None)]
+            if r.signer_text:
+                lines.append(("Publisher", r.signer_text, None))
+            lines += [("Why", reason, None) for reason in r.reasons] + threat_lines(r)
+            if r.sha256:
+                lines.append(("SHA-256", r.sha256, None))
+            self._running_link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+            self.running_location.configure(state="normal")
+            self.running_end.configure(state="normal")
+        else:
+            v = item.verdict.value
+            lines = [("Verdict", v.upper(), v), ("Address" if item.kind == "ip" else "Site", item.target, None)]
+            if item.hostnames:
+                lines.append(("Names", ", ".join(item.hostnames[:5]), None))
+            for c in item.connections:
+                lines.append(("Program", f"{c.program} (process {c.pid}), port {c.port}" +
+                              (f": {c.path}" if c.path else ""), None))
+            lines += [("Why", reason, None) for reason in item.reasons]
+            self._running_link = item.report.gui_link if item.report and item.report.found else None
+            has_program = network.program_path(item) is not None
+            self.running_location.configure(state="normal" if has_program else "disabled")
+            self.running_end.configure(state="normal" if item.connections else "disabled")
+        self.running_detail.show(lines)
+        self.running_vt.configure(state="normal" if self._running_link else "disabled")
+
+    def _open_running_location(self) -> None:
+        item = self._running_selected()
+        path = item.path if isinstance(item, processes.RunningFile) else network.program_path(item) if item else None
+        if path:
+            open_in_explorer(path)
+
+    def _end_program(self) -> None:
+        item = self._running_selected()
+        if item is None:
+            return
+        if isinstance(item, processes.RunningFile):
+            pids, names = item.pids, sorted(item.used_by)
+        else:
+            pids, names = {c.pid for c in item.connections}, item.programs
+        if not messagebox.askyesno(WINDOW_TITLE, f"End {', '.join(names)} ({len(pids)} process(es))?\n\n"
+                                                 "Unsaved work in it will be lost. It may start again later if it's "
+                                                 "set to start automatically (see Startup items).", icon="warning"):
+            return
+        problems = processes.end_processes(pids)
+        log.info("Ended %s (pids %s) from the Running now tab", names, sorted(pids))
+        if problems:
+            messagebox.showwarning(WINDOW_TITLE, "\n".join(problems))
+        self.check_running()
 
     def _build_quarantine_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self.tabs, padding=10)

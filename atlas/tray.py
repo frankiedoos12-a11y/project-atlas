@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
+from collections.abc import Callable
 
 import pystray
 from PIL import Image, ImageDraw
@@ -23,6 +25,73 @@ from atlas.scanner import ScanResult, Verdict
 from atlas.watcher import DownloadGuard
 
 log = logging.getLogger(__name__)
+
+
+class RunningMonitor:
+    """Checks running programs and network connections every so often.
+
+    Speaks up only about programs or addresses flagged as malicious or suspicious, once each
+    per session. Unknown programs are listed in the window's Running now tab instead.
+    """
+
+    def __init__(self, scanner, minutes: int, on_finding: Callable[[str, str, str | None], None]):
+        self.scanner = scanner
+        self.interval = minutes * 60
+        self.on_finding = on_finding
+        self.paused = False
+        self.last_check: str | None = None
+        self._told: set[str] = set()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        delay = 120  # let sign-in settle before the first check
+        while True:
+            asked = self._wake.wait(delay if self.interval else None)  # interval 0: only when asked
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            if asked or not self.paused:
+                self.check()
+            delay = self.interval
+
+    def check_now(self) -> None:
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+
+    def check(self) -> None:
+        from atlas.network import check_network
+        from atlas.processes import check_running
+
+        try:
+            running = check_running(self.scanner)
+            net = check_network(self.scanner)
+        except Exception:  # never let a bad check end the monitor
+            log.exception("Running programs / network check failed")
+            return
+        self.last_check = time.strftime("%H:%M")
+        bad = (Verdict.MALICIOUS, Verdict.SUSPICIOUS)
+        for f in running.files:
+            key = f"file:{f.result.sha256}"
+            if f.verdict in bad and key not in self._told:
+                self._told.add(key)
+                link = f.result.file_report.gui_link if f.result.file_report and f.result.file_report.found else None
+                what = f.result.threat_text or f.result.reasons[0]
+                log.warning("Running %s %s is %s: %s", f.kind, f.path, f.verdict.value, "; ".join(f.result.reasons))
+                self.on_finding(f"Atlas: {f.verdict.value} program running", f"{f.path.name}\n{what}", link)
+        for c in net.flagged:
+            key = f"{c.kind}:{c.target}"
+            if key not in self._told:
+                self._told.add(key)
+                link = c.report.gui_link if c.report and c.report.found else None
+                who = ", ".join(c.programs) or "This PC"
+                log.warning("%s talking to %s: %s", who, c.target, "; ".join(c.reasons))
+                self.on_finding(f"Atlas: {c.verdict.value} connection", f"{who} is talking to {c.target}\n"
+                                f"{c.reasons[0] if c.reasons else ''}", link)
+
 
 STATE_COLORS = {"ok": (37, 99, 235), "paused": (120, 120, 120), "alert": (220, 38, 38)}
 
@@ -51,6 +120,7 @@ class AtlasTray:
         if self.settings.monitor_autoruns:
             self.monitor = AutorunMonitor(self.scanner, self.store, self.settings.autorun_check_minutes,
                                           self._on_autorun)
+        self.running = RunningMonitor(self.scanner, self.settings.running_check_minutes, self._on_running_finding)
         self.alert: str | None = None
         self.busy: str | None = None
         self.icon = pystray.Icon("ProjectAtlas", make_icon("ok"), "Project Atlas", menu=self._menu())
@@ -68,6 +138,7 @@ class AtlasTray:
             pystray.Menu.SEPARATOR,
             item("Pause protection", self._toggle_pause, checked=lambda _: self.guard.paused),
             item("Check startup items now", self._check_autoruns, enabled=lambda _: self.monitor is not None),
+            item("Check running programs and network now", self._check_running),
             item("Scan watched folders now", self._scan_folders, enabled=lambda _: self.busy is None),
             item("Check link on clipboard", self._check_clipboard_link),
             pystray.Menu.SEPARATOR,
@@ -115,7 +186,18 @@ class AtlasTray:
             self.alert = f"{result.verdict.value} startup item {entry.name}"
             self._refresh()
 
+    def _on_running_finding(self, title: str, body: str, link: str | None) -> None:
+        if self.settings.notifications:
+            toast(title, body, link=link, loud=True)
+        self.alert = title.removeprefix("Atlas: ")
+        self._refresh()
+
     # --- Actions -------------------------------------------------------------
+
+    def _check_running(self, icon, item) -> None:
+        self.running.check_now()
+        toast("Atlas: checking running programs and connections",
+              "You'll only hear back if something needs attention. See Running now in the window for everything.")
 
     def _clear_alert(self, icon, item) -> None:
         self.alert = None
@@ -125,6 +207,7 @@ class AtlasTray:
         self.guard.paused = not self.guard.paused
         if self.monitor:
             self.monitor.paused = self.guard.paused
+        self.running.paused = self.guard.paused
         log.info("Protection %s", "paused" if self.guard.paused else "resumed")
         self._refresh()
 
@@ -186,6 +269,7 @@ class AtlasTray:
         self.guard.stop()
         if self.monitor:
             self.monitor.stop()
+        self.running.stop()
         icon.stop()
 
     # --- Running -------------------------------------------------------------
@@ -195,6 +279,7 @@ class AtlasTray:
         threading.Thread(target=self.guard.run, name="download-guard", daemon=True).start()
         if self.monitor:
             threading.Thread(target=self.monitor.run, name="autorun-monitor", daemon=True).start()
+        threading.Thread(target=self.running.run, name="running-monitor", daemon=True).start()
         log.info("Project Atlas %s tray started", __version__)
         self._refresh()
 

@@ -25,7 +25,7 @@ from atlas import config
 from atlas.app import build_scanner, setup_logging
 from atlas.gui import VERDICT_COLORS, DetailBox, Table, open_in_explorer, style_window
 from atlas.quarantine import quarantine_file
-from atlas.scanner import ScanResult, Verdict
+from atlas.scanner import ScanResult, Verdict, threat_lines
 
 log = logging.getLogger(__name__)
 
@@ -241,6 +241,7 @@ class ScanWindow:
         if r.source_text:
             lines.append(("Downloaded", r.source_text, None))
         lines += [("Why", reason, None) for reason in r.reasons]
+        lines += threat_lines(r)
         if r.sha256:
             lines.append(("SHA-256", r.sha256, None))
         if r.action:

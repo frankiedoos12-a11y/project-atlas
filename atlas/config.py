@@ -121,6 +121,9 @@ class Settings:
     # and alert when something new has set itself to start automatically.
     monitor_autoruns: bool = True
     autorun_check_minutes: int = 10
+    # Check running programs and network connections this often (0 = only when asked), and
+    # alert when something flagged is running or being talked to.
+    running_check_minutes: int = 60
     # Disk space tab: where to look, and what counts as big or worth de-duplicating.
     space_scan_folders: list[str] = field(default_factory=lambda: [str(Path.home())])
     big_file_min_mb: int = 500

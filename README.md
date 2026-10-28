@@ -36,7 +36,7 @@ What Atlas does:
 Every new file in your **Downloads** and **Desktop** folders gets:
 
 1. **Hashed** (SHA-256) and looked up on VirusTotal. Only the hash is sent, never the file.
-2. **Traced** to where it came from. Windows tags downloads with a "Mark of the Web" that records the download link and the page it was on, and Atlas checks both sites on VirusTotal too. Only the site name is sent for the page, never its full address.
+2. **Traced** to where it came from. Windows tags downloads with a "Mark of the Web" that records the download link and the page it was on, and Atlas checks both sites on VirusTotal too: their detections, **how old they are** and **how security vendors categorise them**. Fake-download and scam sites are usually registered only days or weeks before they're used, so a site under 30 days old is a warning even before any engine flags it (big, popular sites are exempt). Only the site name is sent for the page, never its full address.
 3. **Signature-checked**. Windows verifies who signed it and whether it has been tampered with since.
 4. **Judged**:
 
@@ -44,8 +44,10 @@ Every new file in your **Downloads** and **Desktop** folders gets:
 |---|---|---|
 | Clean | No engines flagged it | Nothing (logged) |
 | Unknown | VirusTotal has no results for it, it can run code, and it isn't validly signed | Warning pop-up |
-| Suspicious | A few engines flagged it, its signature is broken, or a site involved has a bad reputation | Warning pop-up |
+| Suspicious | A few engines flagged it, its signature is broken, or a site involved has a bad reputation, is brand new, or is listed by security vendors as phishing, malware or adware | Warning pop-up |
 | Malicious | At least 3 engines flagged the file or its download link | Moved to quarantine + pop-up |
+
+**Flagged files are explained, not just counted.** Instead of only "malicious, 12 engines", Atlas shows the malware family engines agree on (*Remcos (trojan)*) and, from VirusTotal's sandboxes, what the file actually does when run, in plain words: *lets an attacker control the PC remotely*, *steals passwords and browser cookies*, *sets itself up to start with Windows*, *turns off User Account Control*, *deletes backup snapshots*, *contacts u973.cantdown.su*. It also lists which sandboxes called it bad and which detection rules it matched. A clean program VirusTotal first saw only days ago gets a note too, since engines can take a few days to catch up with new malware.
 
 **ZIP, 7z, RAR and ISO files are checked inside too**, without extracting anything to disk. Malware is often sent in an archive: the archive is brand new to VirusTotal, but the program inside is well known. Atlas hashes every program inside (including ZIPs inside ZIPs, up to 25 per archive) and looks those up. It also warns about programs disguised as documents (`Invoice.pdf.exe`) and password-protected archives holding programs, a common way to sneak past scanners. A new archive whose contents are all known and clean counts as clean. Zip bombs are detected and never expanded. 7z, RAR and ISO are read with [7-Zip](https://www.7-zip.org/) when it's installed, otherwise with Windows' built-in `tar`. `tar` can't read most modern disc images (UDF), so if it sees nothing inside, Atlas says so instead of calling the disc empty. Only plain `.zip` files are opened as ZIPs: installers, `.jar` and `.msix` files are ZIPs underneath but run code themselves, so their contents never vouch for them.
 
@@ -110,7 +112,7 @@ The **Disk space** tab finds copies of the same file and big files that take up 
 
 The **Browsers** tab covers Chrome, Edge, Brave, Opera and Firefox, every profile.
 
-- **Check a link before you open it.** Paste a link from an email, text or ad. Atlas never visits it. It asks VirusTotal about the exact link and its site, and spots scam tricks offline: a familiar name inside someone else's address (`paypal.com.account-verify.xyz`), look-alike foreign letters, an `@` hiding the real destination, bare IP addresses and link shorteners. A single "suspicious" vote on a normal site is treated as noise. The tray's **Check link on clipboard** does the same from anywhere: copy a link, then click it.
+- **Check a link before you open it.** Paste a link from an email, text or ad. Atlas never visits it. It asks VirusTotal about the exact link and its site, and spots scam tricks offline: a familiar name inside someone else's address (`paypal.com.account-verify.xyz`), look-alike foreign letters, an `@` hiding the real destination, bare IP addresses and link shorteners. It also warns about sites registered in the last 30 days and ones security vendors list as phishing, malware or adware. A single "suspicious" vote on a normal site is treated as noise. The tray's **Check link on clipboard** does the same from anywhere: copy a link, then click it.
 - **Sites allowed to send notifications.** "Click Allow to prove you're not a robot" pages use this to push fake virus alerts and ads. Each site is checked on VirusTotal. **Block notifications** switches a site to *Block* (the browser must be closed; its settings file is backed up first to `%LOCALAPPDATA%\ProjectAtlas\backups`).
 - **Extensions.** Flags the signs of adware: installed by another program from outside the store, forced on by a policy, loaded unpacked, or taking over your search engine, home page or new tab page. Store extensions bundled by a program you installed (Adobe Acrobat, Google Docs Offline) are noted, not flagged. **Open in browser to remove** jumps to that extension in the browser's own extensions page.
 
@@ -118,7 +120,7 @@ The **Browsers** tab covers Chrome, Edge, Brave, Opera and Firefox, every profil
 
 ### Browser extension: check links as you open them
 
-The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on your PC about every page before you use it. A dangerous or suspicious page is replaced by a warning, with *Go back to safety* or *Continue anyway* (remembered until the browser restarts). The toolbar globe shows the current page's verdict, and right-clicking any link gives **Check link with Project Atlas**.
+The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on your PC about every page before you use it. A dangerous or suspicious page (including a brand-new site, the kind malicious ads lead to) is replaced by a warning, with *Go back to safety* or *Continue anyway* (remembered until the browser restarts). The toolbar globe shows the current page's verdict, and right-clicking any link gives **Check link with Project Atlas**.
 
 - **Your key never enters the browser.** The extension talks to a small Atlas helper on your PC (Chrome's *native messaging*), which uses the key from Credential Manager.
 - **Privacy:** pages you open are checked without their `?query` and `#fragment`, which often hold search terms or login tokens. Only links you right-click are checked in full. Addresses on your PC or home network (`192.168.x.x`, `localhost`, `router`, `*.local`) are never sent anywhere.
@@ -126,11 +128,21 @@ The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on
 
 **Set up:** the installer connects the helper (`atlas browser-extension on`). Then, once per browser: open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked**, paste `%LOCALAPPDATA%\Programs\ProjectAtlas\extension` into the folder box's address bar, press Enter and click **Select Folder**. Atlas's own ad-spam finder recognizes it, so it isn't flagged for being loaded unpacked.
 
+## 6. Running now: programs and network
+
+Is anything bad running right now? The **Running now** tab answers it two ways. Both only look; nothing is stopped or blocked unless you press **End program...** (which asks first).
+
+- **Programs.** Atlas hashes the file behind every running program and looks it up on VirusTotal. Tick **Include DLLs** to also check the DLLs they've loaded from outside the Windows folder: malware often hides as a DLL next to a legitimate program. (The first check with DLLs can take a few minutes; hashes are remembered, so later ones are quick.) A file VirusTotal has never seen is fine if it's validly signed, and marked *Unknown* if not. Flagged files get the same plain-words explanation as downloads.
+- **Network connections.** Every connection a program has open to an internet address (not your home network), with the program's name, who owns the address (*Google LLC*, *Akamai*, *Bad Hosting Ltd, NL*), and whether VirusTotal flags it. Addresses are shared by many sites, so like websites they need several engines before they count as suspicious. On Windows versions that allow it, Atlas also checks the sites the PC looked up recently (the DNS cache); recent Windows 11 builds only show that list to administrators, and Atlas says so when it can't see it.
+
+The tray repeats both checks every hour (`running_check_minutes`; `0` = only when you ask) and pops up an alert the first time something flagged is running or being talked to. Unknown programs are listed in the tab rather than popped up. `atlas running` (`--dlls`) and `atlas network` do the same from the console.
+
 ## The Atlas window
 
-Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has six tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has seven tabs:
 
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
+- **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
 - **Cleanup**: finds junk and leftovers with no home (see below). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
@@ -146,6 +158,7 @@ The globe is **blue** while protecting, **grey** while paused, and **red** after
 - Open Project Atlas
 - Pause protection
 - Check startup items now
+- Check running programs and network now
 - Scan watched folders now
 - Check link on clipboard
 - Open activity log / quarantine folder / settings file
@@ -163,6 +176,8 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas gui` | Open the Atlas window (same as `atlas-gui.exe`) |
 | `atlas guard` | Same protection, in a console window (Ctrl+C to stop) |
 | `atlas autoruns` | Check everything set to start automatically (`--all` to include Microsoft items) |
+| `atlas running` | Check running programs with VirusTotal (`--dlls` to include loaded DLLs, `--all` to list clean ones too) |
+| `atlas network` | Check the internet addresses programs are connected to (`--all` to list clean ones too) |
 | `atlas cleanup` | Report junk that can be removed (read-only; clean from the window) |
 | `atlas space` | Report duplicate and big files (read-only; act from the window) |
 | `atlas browsers` | List notification sites and extensions (read-only; act from the window) |
@@ -180,7 +195,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Where things live
 
-- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, startup-check interval)
+- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, startup-check and running-check intervals)
 - History, cache, quarantine, backups, log: `%LOCALAPPDATA%\ProjectAtlas\`
 - API key: Windows Credential Manager, entry `ProjectAtlas`
 

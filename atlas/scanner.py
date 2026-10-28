@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
 from atlas.archives import can_inspect, inspect
+from atlas.behaviour import describe_behaviour
 from atlas.config import Settings
 from atlas.db import Store
 from atlas.local_checks import (
@@ -20,9 +22,12 @@ from atlas.local_checks import (
     sha256_file,
 )
 from atlas.quarantine import quarantine_file
+from atlas.sites import age_text, site_warnings
 from atlas.vt_client import Report, VTClient, VTError
 
 log = logging.getLogger(__name__)
+
+NEW_FILE_DAYS = 3  # a program VirusTotal first saw this recently gets a note even when clean
 
 
 def short_url(url: str) -> str:
@@ -56,6 +61,17 @@ class ScanResult:
     motw: MarkOfTheWeb | None = None
     signature: Signature | None = None
     action: str | None = None  # e.g. "quarantined #4"
+    behaviour: list[str] = field(default_factory=list)  # what sandboxes saw it do, for flagged files
+
+    @property
+    def threat_text(self) -> str | None:
+        """e.g. "Remcos (trojan)": the malware family engines and sandboxes agree on."""
+        report = self.file_report
+        if not (report and report.threat_names and (report.malicious or report.suspicious or report.sandbox)):
+            return None
+        names = ", ".join(n[:1].upper() + n[1:] for n in report.threat_names[:3])
+        kind = report.label.split(".")[0] if report.label else None
+        return f"{names} ({kind})" if kind else names
 
     @property
     def signer_text(self) -> str | None:
@@ -84,6 +100,20 @@ class ScanResult:
             self.verdict = verdict
 
 
+def threat_lines(result: ScanResult) -> list[tuple[str, str, None]]:
+    """(label, text, None) rows describing a flagged file, for the windows' detail panels."""
+    rows = []
+    if result.threat_text:
+        rows.append(("Known as", result.threat_text, None))
+    rows += [("Does", line, None) for line in result.behaviour]
+    report = result.file_report
+    if report and (report.malicious or report.suspicious or report.sandbox):
+        rows += [("Sandbox", s, None) for s in report.sandbox[:4]]
+        if report.rules:
+            rows.append(("Rules", ", ".join(report.rules[:5]), None))
+    return rows
+
+
 class Scanner:
     def __init__(self, settings: Settings, store: Store, vt: VTClient | None, data_dir: Path):
         self.settings = settings
@@ -95,10 +125,29 @@ class Scanner:
         cached = self.store.cached_report(kind, target, self.settings.cache_hours)
         if cached is not None:
             return cached
-        fetch = {"file": self.vt.file_report, "url": self.vt.url_report, "domain": self.vt.domain_report}[kind]
-        report = fetch(target)
+        report = getattr(self.vt, f"{kind}_report")(target)  # file_report, url_report, domain_report, ip_report
         self.store.cache_report(report)
         return report
+
+    def behaviour(self, sha256: str) -> list[str]:
+        """What sandboxes saw the file do, in plain words. Cached like reports."""
+        cached = self.store.cached_extra("behaviour", sha256, self.settings.cache_hours)
+        if cached is not None:
+            return cached
+        lines = describe_behaviour(self.vt.behaviour_summary(sha256))
+        self.store.cache_extra("behaviour", sha256, lines)
+        return lines
+
+    def judge_site_record(self, result, host: str, report: Report | None = None) -> None:
+        """Warn about brand-new sites and ones security vendors list as phishing, malware and so on.
+
+        `result` is anything with raise_to() and reasons (a ScanResult or a LinkCheck).
+        """
+        for warn, text in site_warnings(self.lookup, host, report):
+            if warn:
+                result.raise_to(Verdict.SUSPICIOUS, text)
+            else:
+                result.reasons.append(text)
 
     def judge_report(self, result: ScanResult, report: Report, what: str, site: bool = False) -> None:
         """Turn a VirusTotal report into a verdict.
@@ -169,6 +218,7 @@ class Scanner:
                     if domain:
                         result.domain_report = self.lookup("domain", domain)
                         self.judge_report(result, result.domain_report, f"Download site {domain}", site=True)
+                        self.judge_site_record(result, domain, result.domain_report)
 
                 # The page the link was on. Fake download pages often serve their files from
                 # legitimate cloud storage, so this site can be the only bad signal.
@@ -179,6 +229,11 @@ class Scanner:
                     result.page_domain_report = self.lookup("domain", page_domain)
                     self.judge_report(result, result.page_domain_report, f"Linking page site {page_domain}",
                                        site=True)
+                    self.judge_site_record(result, page_domain, result.page_domain_report)
+
+            report = result.file_report
+            if report.found and (report.malicious or report.suspicious or report.sandbox):
+                result.behaviour = self.behaviour(result.sha256)
         except VTError as exc:
             result.raise_to(Verdict.ERROR, str(exc))
         except Exception as exc:  # network failures etc. must never crash the watcher
@@ -190,6 +245,12 @@ class Scanner:
                 result.reasons.append(f"No engines flagged this file ({result.file_report.total} checked)")
             else:
                 result.reasons.append("VirusTotal has no scan results for this file, but it is not a type that can run code")
+        report = result.file_report
+        if report and report.analyzed and report.first_seen and result.verdict is Verdict.CLEAN and risky:
+            days = (time.time() - report.first_seen) / 86400
+            if days < NEW_FILE_DAYS:
+                result.reasons.append(f"VirusTotal first saw this file {age_text(days)}. Engines can take a few "
+                                      "days to catch up with new malware, so be careful with it")
         result.reasons.extend(inside)
 
         if act and result.verdict is Verdict.MALICIOUS and self.settings.quarantine_malicious:

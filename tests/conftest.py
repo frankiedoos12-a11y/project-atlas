@@ -11,10 +11,12 @@ from atlas.vt_client import Report
 class FakeVT:
     """Stands in for VTClient; returns canned reports and counts calls."""
 
-    def __init__(self, files=None, urls=None, domains=None):
+    def __init__(self, files=None, urls=None, domains=None, ips=None, behaviour=None):
         self.files = files or {}
         self.urls = urls or {}
         self.domains = domains or {}
+        self.ips = ips or {}
+        self.behaviours = behaviour or {}  # sha256 -> raw behaviour summary
         self.calls: list[tuple[str, str]] = []
 
     def _get(self, kind, table, target):
@@ -32,6 +34,13 @@ class FakeVT:
 
     def domain_report(self, domain):
         return self._get("domain", self.domains, domain)
+
+    def ip_report(self, ip):
+        return self._get("ip", self.ips, ip)
+
+    def behaviour_summary(self, sha256):
+        self.calls.append(("behaviour", sha256))
+        return self.behaviours.get(sha256)
 
 
 @pytest.fixture(autouse=True)

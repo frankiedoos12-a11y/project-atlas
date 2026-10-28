@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from atlas.scanner import Scanner, Verdict
+from atlas.sites import registered_domain
 from atlas.vt_client import Report, VTError
 
 SHORTENERS = {"bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly",
@@ -51,14 +52,6 @@ def normalize(text: str) -> str:
     return url
 
 
-def _registered_domain(host: str) -> str:
-    """Rough "example.co.uk" / "example.com" from a host name."""
-    labels = host.split(".")
-    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in {"co", "com", "org", "net", "ac", "gov"}:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
-
-
 def local_warnings(url: str) -> list[tuple[Verdict, str]]:
     """Scam-link tricks that can be spotted without asking anyone."""
     parts = urlparse(url)
@@ -77,7 +70,7 @@ def local_warnings(url: str) -> list[tuple[Verdict, str]]:
     if any(label.startswith("xn--") for label in host.split(".")):
         found.append((Verdict.SUSPICIOUS, "Uses look-alike foreign letters in the web address (punycode), "
                                           "a common trick to imitate a real site"))
-    registered = _registered_domain(host)
+    registered = registered_domain(host)
     owner = registered.split(".")[0]
     for label in host.split(".")[:-2]:
         if label in BRANDS and label != owner:
@@ -150,6 +143,7 @@ def check_link(scanner: Scanner | None, text: str) -> LinkCheck:
         _judge_link(check, check.url_report, scanner.settings.malicious_threshold)
         check.domain_report = scanner.lookup("domain", check.host)
         scanner.judge_report(check, check.domain_report, f"The site {check.host}", site=True)
+        scanner.judge_site_record(check, check.host, check.domain_report)
     except VTError as exc:
         check.raise_to(Verdict.ERROR, str(exc))
         return check

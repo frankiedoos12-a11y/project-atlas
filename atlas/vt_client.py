@@ -1,7 +1,7 @@
 """Minimal VirusTotal API v3 client.
 
-Only the lookups Project Atlas needs: file reports by hash, URL reports, domain
-reports, and (opt-in only) file uploads.
+Only the lookups Project Atlas needs: file reports by hash, URL, domain and IP address
+reports, sandbox behaviour summaries, and (opt-in only) file uploads.
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ class VTError(Exception):
 class Report:
     """Detection summary for a file, URL, or domain."""
 
-    kind: str  # "file", "url", or "domain"
-    target: str  # sha256, url, or domain name
+    kind: str  # "file", "url", "domain" or "ip"
+    target: str  # sha256, url, domain name or IP address
     found: bool
     malicious: int = 0
     suspicious: int = 0
@@ -34,6 +34,15 @@ class Report:
     undetected: int = 0
     label: str | None = None  # e.g. "trojan.emotet/heodo"
     names: list[str] = field(default_factory=list)  # engine names that flagged it
+    # Extra detail, when VirusTotal has it. Reports cached by older versions simply lack it.
+    created: int | None = None  # site: when the domain was registered (Unix time)
+    first_seen: int | None = None  # when VirusTotal first saw the file or site
+    categories: list[str] = field(default_factory=list)  # site: security vendors' categories
+    popularity: int | None = None  # site: best current rank in a popularity list (1 = most visited)
+    threat_names: list[str] = field(default_factory=list)  # file: malware family names, e.g. "remcos"
+    sandbox: list[str] = field(default_factory=list)  # file: sandboxes that called it bad, and why
+    rules: list[str] = field(default_factory=list)  # file: detection rules it matched
+    owner: str | None = None  # IP address: the network that owns it, and its country
 
     @property
     def total(self) -> int:
@@ -50,6 +59,8 @@ class Report:
             return f"{GUI_BASE}/file/{self.target}"
         if self.kind == "domain":
             return f"{GUI_BASE}/domain/{self.target}"
+        if self.kind == "ip":
+            return f"{GUI_BASE}/ip-address/{self.target}"
         return f"{GUI_BASE}/url/{url_id(self.target)}"
 
     @classmethod
@@ -59,7 +70,19 @@ class Report:
         flagged = sorted(
             engine for engine, r in results.items() if r.get("category") in ("malicious", "suspicious")
         )
-        label = (attrs.get("popular_threat_classification") or {}).get("suggested_threat_label")
+        threat = attrs.get("popular_threat_classification") or {}
+        sandbox, families = [], []
+        for name, v in (attrs.get("sandbox_verdicts") or {}).items():
+            if v.get("category") in ("malicious", "suspicious"):
+                kinds = ", ".join(c.lower() for c in v.get("malware_classification") or [] if c != "MALWARE")
+                malware = ", ".join(v.get("malware_names") or [])
+                families += v.get("malware_names") or []
+                detail = "; ".join(x for x in (kinds, malware) if x)
+                sandbox.append(f"{v.get('sandbox_name') or name}: {v['category']}" + (f" ({detail})" if detail else ""))
+        rules = [y["rule_name"] for y in attrs.get("crowdsourced_yara_results") or [] if y.get("rule_name")]
+        rules += [s["rule_title"] for s in attrs.get("sigma_analysis_results") or []
+                  if s.get("rule_level") in ("critical", "high") and s.get("rule_title")]
+        owner = ", ".join(str(x) for x in (attrs.get("as_owner"), attrs.get("country")) if x) or None
         return cls(
             kind=kind,
             target=target,
@@ -68,9 +91,34 @@ class Report:
             suspicious=int(stats.get("suspicious", 0)),
             harmless=int(stats.get("harmless", 0)),
             undetected=int(stats.get("undetected", 0)),
-            label=label,
+            label=threat.get("suggested_threat_label"),
             names=flagged,
+            created=attrs.get("creation_date"),
+            first_seen=attrs.get("first_submission_date") or attrs.get("first_seen_date"),
+            categories=_unique(attrs.get("categories", {}).values()),
+            popularity=_best_rank(attrs.get("popularity_ranks") or {}),
+            threat_names=_unique([n["value"] for n in threat.get("popular_threat_name") or []] + families),
+            sandbox=sandbox,
+            rules=_unique(rules)[:8],
+            owner=owner,
         )
+
+
+def _unique(values) -> list[str]:
+    """Distinct values, first spelling wins, ignoring case."""
+    seen, out = set(), []
+    for v in values:
+        if isinstance(v, str) and v.strip() and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v.strip())
+    return out
+
+
+def _best_rank(ranks: dict, max_age_days: int = 400) -> int | None:
+    """The best rank among popularity lists updated in the last year (some lists stopped years ago)."""
+    cutoff = time.time() - max_age_days * 86400
+    current = [r["rank"] for r in ranks.values() if r.get("rank") and r.get("timestamp", 0) >= cutoff]
+    return min(current) if current else None
 
 
 def url_id(url: str) -> str:
@@ -119,6 +167,17 @@ class VTClient:
         if data is None:
             return Report(kind="domain", target=domain, found=False)
         return Report.from_attributes("domain", domain, data["attributes"])
+
+    def ip_report(self, ip: str) -> Report:
+        data = self._get(f"/ip_addresses/{ip}")
+        if data is None:
+            return Report(kind="ip", target=ip, found=False)
+        return Report.from_attributes("ip", ip, data["attributes"])
+
+    def behaviour_summary(self, sha256: str) -> dict | None:
+        """What sandboxes saw the file do (all sandboxes merged), or None if it was never run in one."""
+        data = self._get(f"/files/{sha256}/behaviour_summary")
+        return data or None
 
     def upload_file(self, path: Path) -> str:
         """Upload a file for analysis and return the analysis id.

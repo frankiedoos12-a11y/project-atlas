@@ -27,7 +27,9 @@ AUTORUN_TITLES = {
 
 def toast_body(result: ScanResult) -> str:
     lines = [result.path.name]
-    if result.reasons:
+    if result.threat_text:
+        lines.append(f"Known as {result.threat_text}" + (f": {result.behaviour[0].lower()}" if result.behaviour else ""))
+    elif result.reasons:
         lines.append(result.reasons[0])
     details = [t for t in (result.signer_text, result.source_text) if t]
     if details:

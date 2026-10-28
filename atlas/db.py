@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS vt_cache (
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (kind, target)
 );
+CREATE TABLE IF NOT EXISTS vt_extra (
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    data TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (kind, target)
+);
 CREATE TABLE IF NOT EXISTS scans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scanned_at TEXT NOT NULL,
@@ -117,6 +124,24 @@ class Store:
         """Drop a cached report so the next lookup asks VirusTotal again."""
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM vt_cache WHERE kind = ? AND target = ?", (kind, target))
+            self._conn.execute("DELETE FROM vt_extra WHERE target = ?", (target,))
+
+    def cached_extra(self, kind: str, target: str, max_age_hours: int):
+        """Other VirusTotal answers kept as JSON (e.g. "behaviour"), or None if missing or stale."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data, fetched_at FROM vt_extra WHERE kind = ? AND target = ?", (kind, target)
+            ).fetchone()
+        if row is None or _now() - datetime.fromisoformat(row["fetched_at"]) > timedelta(hours=max_age_hours):
+            return None
+        return json.loads(row["data"])
+
+    def cache_extra(self, kind: str, target: str, data) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO vt_extra (kind, target, data, fetched_at) VALUES (?, ?, ?, ?)",
+                (kind, target, json.dumps(data), _now().isoformat()),
+            )
 
     # --- Scan history -----------------------------------------------------
 

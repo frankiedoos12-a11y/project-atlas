@@ -30,7 +30,7 @@ from atlas import __version__, autostart, config
 from atlas.app import build_scanner, claim_single_instance, setup_logging, watch_folders
 from atlas.db import Store
 from atlas.quarantine import quarantine_dir, restore_file
-from atlas.scanner import ScanResult, Verdict, short_url
+from atlas.scanner import ScanResult, Verdict, short_url, threat_lines
 from atlas.vt_client import VTClient
 
 COLORS = {
@@ -58,6 +58,8 @@ def _print_result(result: ScanResult) -> None:
         print(f"           signed: {result.signature.status}{signer}")
     for reason in result.reasons:
         print(f"           - {reason}")
+    for label, text, _ in threat_lines(result):
+        print(f"           {label + ':':<10} {text}")
     if result.file_report and result.file_report.found:
         print(f"           {result.file_report.gui_link}")
     if result.action:
@@ -313,6 +315,57 @@ def cmd_browsers(args) -> int:
     return 0
 
 
+def cmd_running(args) -> int:
+    """Look up every running program (and optionally loaded DLLs). Read-only."""
+    from atlas.processes import check_running
+
+    scanner, store = build_scanner(config.Settings.load())
+    live = sys.stdout.isatty()  # a progress line only makes sense in a terminal, not in a saved log
+    report = check_running(scanner, include_dlls=args.dlls,
+                           progress=(lambda t: print(f"\r{t:<60}", end="", flush=True)) if live else None)
+    if live:
+        print("\r" + " " * 60 + "\r", end="")
+    for error in report.errors:
+        print(error)
+    shown = report.files if args.all else report.flagged + [f for f in report.files if f.verdict is Verdict.ERROR]
+    for f in shown:
+        print(f"{_verdict_label(f.verdict)} {f.path}  ({f.kind}, used by {', '.join(sorted(f.used_by))})")
+        for reason in f.result.reasons:
+            print(f"           - {reason}")
+        for label, text, _ in threat_lines(f.result):
+            print(f"           {label + ':':<10} {text}")
+    clean = sum(1 for f in report.files if f.verdict is Verdict.CLEAN)
+    print(f"\n{len(report.files)} files checked: {len(report.flagged)} need a look, {clean} clean."
+          + (f" {report.unreadable} process(es) need administrator rights to look into." if report.unreadable else "")
+          + ("" if args.all else " Add --all to list everything."))
+    store.close()
+    return 2 if report.flagged else 0
+
+
+def cmd_network(args) -> int:
+    """Check the internet addresses programs are connected to right now. Read-only."""
+    from atlas.network import check_network
+
+    scanner, store = build_scanner(config.Settings.load())
+    report = check_network(scanner)
+    for error in report.errors:
+        print(error)
+    for c in report.addresses + report.sites:
+        if not args.all and c.verdict is Verdict.CLEAN:
+            continue
+        what = ", ".join(c.programs) if c.kind == "ip" else "looked up"
+        print(f"{_verdict_label(c.verdict)} {c.target}  ({what})")
+        for reason in c.reasons:
+            print(f"           - {reason}")
+    print(f"\n{len(report.addresses)} internet addresses in use, {len(report.flagged)} flagged."
+          + (f" {len(report.sites)} recently looked-up sites checked." if report.sites else
+             " Recently looked-up sites: Windows shows that list only to administrators here." if not
+             report.dns_available else "")
+          + ("" if args.all else " Add --all to list everything."))
+    store.close()
+    return 2 if report.flagged else 0
+
+
 def cmd_history(args) -> int:
     store = Store(config.data_dir() / "atlas.db")
     for row in reversed(store.recent_scans(args.limit)):
@@ -446,6 +499,15 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("browsers", help="list notification sites and extensions (read-only)")
     p.add_argument("--no-vt", action="store_true", help="don't look sites up on VirusTotal")
     p.set_defaults(func=cmd_browsers)
+
+    p = sub.add_parser("running", aliases=["processes"], help="check running programs with VirusTotal (read-only)")
+    p.add_argument("--dlls", action="store_true", help="also check DLLs loaded from outside the Windows folder")
+    p.add_argument("--all", action="store_true", help="list clean files too")
+    p.set_defaults(func=cmd_running)
+
+    p = sub.add_parser("network", help="check what programs are connected to (read-only)")
+    p.add_argument("--all", action="store_true", help="list clean addresses too")
+    p.set_defaults(func=cmd_network)
 
     p = sub.add_parser("history", help="show recent scans")
     p.add_argument("-n", "--limit", type=int, default=20)
