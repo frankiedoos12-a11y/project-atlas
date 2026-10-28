@@ -62,6 +62,7 @@ class ScanResult:
     signature: Signature | None = None
     action: str | None = None  # e.g. "quarantined #4"
     behaviour: list[str] = field(default_factory=list)  # what sandboxes saw it do, for flagged files
+    gti: list[dict] = field(default_factory=list)  # Google Threat Intelligence reports and actors naming it
 
     @property
     def threat_text(self) -> str | None:
@@ -106,6 +107,7 @@ def threat_lines(result: ScanResult) -> list[tuple[str, str, None]]:
     if result.threat_text:
         rows.append(("Known as", result.threat_text, None))
     rows += [("Does", line, None) for line in result.behaviour]
+    rows += [("GTI " + g["kind"], g["name"], None) for g in result.gti]
     report = result.file_report
     if report and (report.malicious or report.suspicious or report.sandbox):
         rows += [("Sandbox", s, None) for s in report.sandbox[:4]]
@@ -137,6 +139,23 @@ class Scanner:
         lines = describe_behaviour(self.vt.behaviour_summary(sha256))
         self.store.cache_extra("behaviour", sha256, lines)
         return lines
+
+    def gti_reports(self, sha256: str) -> list[dict]:
+        """Google Threat Intelligence reports and threat actors naming a file (only with a GTI key)."""
+        if not self.settings.gti_enabled or not hasattr(self.vt, "api_get"):
+            return []
+        from atlas import gti
+
+        try:
+            return gti.reports_for_file(self.vt, self.store, sha256) if gti.available(self.vt, self.store) else []
+        except Exception:  # extra context only: never let it spoil a verdict
+            log.exception("GTI lookup failed for %s", sha256)
+            return []
+
+    def explain(self, result: ScanResult) -> None:
+        """Behaviour and threat reports for a flagged file."""
+        result.behaviour = self.behaviour(result.sha256)
+        result.gti = self.gti_reports(result.sha256)
 
     def judge_site_record(self, result, host: str, report: Report | None = None) -> None:
         """Warn about brand-new sites and ones security vendors list as phishing, malware and so on.
@@ -233,7 +252,7 @@ class Scanner:
 
             report = result.file_report
             if report.found and (report.malicious or report.suspicious or report.sandbox):
-                result.behaviour = self.behaviour(result.sha256)
+                self.explain(result)
         except VTError as exc:
             result.raise_to(Verdict.ERROR, str(exc))
         except Exception as exc:  # network failures etc. must never crash the watcher

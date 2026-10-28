@@ -10,6 +10,8 @@
     atlas protection           check Defender, browser start/search pages, proxy, hosts file, DNS
     atlas installed            check installed programs for adware and unwanted software
     atlas second-opinion FILE  ask Microsoft Defender to scan a file too
+    atlas hunt [--admin]       command lines, certificates, drivers, open ports, user folders, threat intel
+    atlas gti [sync]           Google Threat Intelligence reports on this PC
     atlas quota                VirusTotal lookups used today and this month
     atlas update [--now]       check GitHub for a newer version
     atlas history              show recent scans
@@ -429,6 +431,79 @@ def cmd_second_opinion(args) -> int:
     return worst
 
 
+def cmd_hunt(args) -> int:
+    """Command lines, certificates, drivers, open ports, user-folder programs and threat intel. Read-only."""
+    from atlas import deepcheck
+    from atlas.hunt import check_hunt
+
+    scanner, store = build_scanner(config.Settings.load())
+    deep = None
+    if args.admin:
+        print("Windows will ask for administrator permission...")
+        try:
+            deep = deepcheck.run_elevated()
+        except OSError as exc:
+            print(f"Deep check skipped: {exc}")
+    live = sys.stdout.isatty()
+    findings = check_hunt(scanner, deep=deep,
+                          progress=(lambda t: print(f"\r{t[:70]:<70}", end="", flush=True)) if live else None)
+    if live:
+        print("\r" + " " * 70 + "\r", end="")
+    labels = {"warn": "[LOOK]   ", "note": "[NOTE]   ", "ok": "[OK]     "}
+    for f in findings:
+        if not args.all and f.level == "ok":
+            continue
+        print(f"{labels.get(f.level, '')} {f.area}: {f.title}")
+        for line in f.details:
+            print(f"           - {line}")
+        if f.vt_link:
+            print(f"           {f.vt_link}")
+    flagged = [f for f in findings if f.needs_look]
+    print(f"\n{len(findings)} findings: {len(flagged)} need a look."
+          + ("" if args.all else " Add --all to list what's fine too.")
+          + ("" if args.admin else " Add --admin for the administrator-only checks."))
+    store.close()
+    return 2 if flagged else 0
+
+
+def cmd_deep_check(args) -> int:
+    """The administrator-only collector (Atlas starts this itself with Windows' permission prompt)."""
+    from atlas import deepcheck
+
+    data = deepcheck.collect()
+    out = Path(args.out) if args.out else deepcheck.output_file()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, default=str), encoding="utf-8")
+    print(f"Wrote {out}")
+    return 0
+
+
+def cmd_gti(args) -> int:
+    """Google Threat Intelligence: download new reports, or show what's on this PC."""
+    from atlas import gti
+    from atlas.hunt import gti_on, sync_gti
+
+    scanner, store = build_scanner(config.Settings.load())
+    try:
+        if not gti_on(scanner):
+            print("This VirusTotal key doesn't reach Google Threat Intelligence (or gti_enabled is off).")
+            return 1
+        if args.action == "sync":
+            live = sys.stdout.isatty()
+            new, _ = sync_gti(scanner, force=True,
+                              progress=(lambda t: print(f"\r{t[:70]:<70}", end="", flush=True)) if live else None)
+            if live:
+                print("\r" + " " * 70 + "\r", end="")
+            print(f"{new} new report(s) downloaded.")
+        reports, iocs = store.gti_stats()
+        last = gti.last_sync(store)
+        print(f"{reports} GTI reports about Windows from the last {scanner.settings.gti_days} days, {iocs:,} indicators."
+              f" Last updated: {last.astimezone():%Y-%m-%d %H:%M}" if last else " Never updated.")
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_quota(args) -> int:
     """Atlas's own VirusTotal requests today and this month."""
     from atlas.app import vt_usage
@@ -560,6 +635,10 @@ def cmd_context_menu(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Names like "μTorrent" mustn't crash the output when it goes to a file or another program.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(prog="atlas", description="Project Atlas: VirusTotal-powered protection")
     parser.add_argument("--version", action="version", version=f"Project Atlas {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -620,6 +699,21 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("second-opinion", aliases=["defender"], help="ask Microsoft Defender to scan files")
     p.add_argument("paths", nargs="+")
     p.set_defaults(func=cmd_second_opinion)
+
+    p = sub.add_parser("hunt", help="command lines, certificates, drivers, open ports, user-folder programs and "
+                                    "threat intel (read-only)")
+    p.add_argument("--all", action="store_true", help="also list what's fine")
+    p.add_argument("--admin", action="store_true", help="include the administrator-only checks (asks permission)")
+    p.set_defaults(func=cmd_hunt)
+
+    p = sub.add_parser("deep-check", help=argparse.SUPPRESS)
+    p.add_argument("--collect", action="store_true")
+    p.add_argument("--out")
+    p.set_defaults(func=cmd_deep_check)
+
+    p = sub.add_parser("gti", help="Google Threat Intelligence reports: sync or status")
+    p.add_argument("action", nargs="?", choices=["sync", "status"], default="status")
+    p.set_defaults(func=cmd_gti)
 
     sub.add_parser("quota", aliases=["usage"], help="VirusTotal lookups used today and this month"
                    ).set_defaults(func=cmd_quota)

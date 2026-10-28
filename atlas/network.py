@@ -153,7 +153,9 @@ def _judge_site(scanner: Scanner, check: RemoteCheck) -> None:
 
 
 def check_network(scanner: Scanner, progress: Callable[[str], None] | None = None,
-                  cancel: threading.Event | None = None, include_dns: bool = True) -> NetworkReport:
+                  cancel: threading.Event | None = None, include_dns: bool = True,
+                  dns_pairs: list[tuple[str, str]] | None = None) -> NetworkReport:
+    """`dns_pairs` (name, address) from an administrator's deep check replace reading the DNS cache."""
     result = NetworkReport()
     if scanner.vt is None:
         result.errors.append("No VirusTotal API key configured. Run: atlas set-key")
@@ -165,7 +167,7 @@ def check_network(scanner: Scanner, progress: Callable[[str], None] | None = Non
     for conn in connections():
         by_ip.setdefault(conn.ip, RemoteCheck(conn.ip, "ip")).connections.append(conn)
 
-    pairs = dns_cache() if include_dns else None
+    pairs = dns_pairs if dns_pairs is not None else dns_cache() if include_dns else None
     result.dns_available = pairs is not None or not include_dns
     names = set()
     for name, data in pairs or []:

@@ -20,7 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from atlas import __version__, browsers, config, defender, installed, network, processes, protection, space, updates
+from atlas import (__version__, browsers, config, deepcheck, defender, gti, hunt, installed, network, processes,
+                   protection, space, updates)
 from atlas.app import build_scanner, guard_running, launch_tray, vt_usage_text
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
@@ -194,6 +195,7 @@ class AtlasWindow:
         self.tabs.add(self._build_running_tab(), text="  Running now  ")
         self.tabs.add(self._build_installed_tab(), text="  Installed  ")
         self.tabs.add(self._build_protection_tab(), text="  Protection  ")
+        self.tabs.add(self._build_hunt_tab(), text="  Threat hunt  ")
         self.tabs.add(self._build_activity_tab(), text="  Activity  ")
         self.tabs.add(self._build_cleanup_tab(), text="  Cleanup  ")
         self.tabs.add(self._build_space_tab(), text="  Disk space  ")
@@ -1598,6 +1600,132 @@ class AtlasWindow:
         if message:
             messagebox.showinfo(WINDOW_TITLE, message)
             self.check_protection()
+
+    def _build_hunt_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.hunt_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
+                                      text="What a hash lookup can't see: suspicious command lines, rogue root "
+                                           "certificates, vulnerable drivers, programs accepting connections, "
+                                           "unsigned programs in user folders and threat-intel matches. Click Check now.")
+        self.hunt_summary.pack(side="left", fill="x", expand=True)
+        self.hunt_deep = ttk.Button(bar, text="Deep check (administrator)...", command=lambda: self.check_hunt(True))
+        self.hunt_deep.pack(side="right", padx=(6, 0))
+        self.hunt_button = ttk.Button(bar, text="Check now", command=self.check_hunt)
+        self.hunt_button.pack(side="right")
+        self.hunt_intel = ttk.Label(tab, style="Muted.TLabel", text=self._intel_text())
+        self.hunt_intel.pack(anchor="w", pady=(4, 0))
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(6, 0))
+        self.hunt_table = Table(panes, [("verdict", "Status", 120), ("area", "Area", 160),
+                                        ("details", "Finding", 800)], self._show_hunt_row, self.scale)
+        self.hunt_table.tree.tag_configure("warn", foreground=VERDICT_COLORS["suspicious"])
+        self.hunt_table.tree.tag_configure("note", foreground="#444444")
+        self.hunt_table.tree.tag_configure("ok", foreground=VERDICT_COLORS["clean"])
+        panes.add(self.hunt_table, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.hunt_fix = ttk.Button(buttons, text="Open...", state="disabled", command=self._hunt_fix)
+        self.hunt_fix.pack(side="left")
+        self.hunt_location = ttk.Button(buttons, text="Open file location", state="disabled",
+                                        command=lambda: self._hunt_path() and open_in_explorer(self._hunt_path()))
+        self.hunt_location.pack(side="left", padx=6)
+        self.hunt_defender = ttk.Button(buttons, text="Ask Defender", state="disabled",
+                                        command=lambda: self._ask_defender(self._hunt_path()))
+        self.hunt_defender.pack(side="left")
+        self.hunt_link = ttk.Button(buttons, text="Open report", state="disabled",
+                                    command=lambda: self._hunt_url and webbrowser.open(self._hunt_url))
+        self.hunt_link.pack(side="right")
+        self.hunt_detail = DetailBox(lower)
+        self.hunt_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=1)
+        self.hunt_findings: dict = {}
+        self._hunt_url: str | None = None
+        return tab
+
+    def _intel_text(self) -> str:
+        reports, iocs = self.store.gti_stats()
+        last = gti.last_sync(self.store)
+        if not reports and last is None:
+            return "Google Threat Intelligence: used automatically with a VirusTotal Enterprise / GTI key."
+        when = last.astimezone().strftime("%Y-%m-%d %H:%M") if last else "never"
+        return (f"Google Threat Intelligence: {iocs:,} indicators from {reports} Windows threat reports of the last "
+                f"{self.scanner.settings.gti_days} days (updated {when}).")
+
+    def check_hunt(self, deep: bool = False) -> None:
+        if deep and not messagebox.askyesno(
+                WINDOW_TITLE, "The deep check reads what Windows only shows administrators: Defender's exclusions, "
+                              "the DNS cache, failed sign-ins and new accounts, every process's command line and WMI "
+                              "subscriptions.\n\nWindows will ask for permission. It only reads; nothing is changed. "
+                              "Continue?"):
+            return
+        self.hunt_button.configure(state="disabled")
+        self.hunt_deep.configure(state="disabled")
+        self.hunt_summary.configure(text="Waiting for Windows' permission..." if deep else "Starting...")
+
+        def progress(text: str) -> None:
+            self._ui_queue.put(lambda: self.hunt_summary.configure(text=text))
+
+        def work():
+            data = deepcheck.run_elevated() if deep else None
+            return hunt.check_hunt(self.scanner, progress, deep=data)
+
+        def done(findings) -> None:
+            self.hunt_button.configure(state="normal")
+            self.hunt_deep.configure(state="normal")
+            self.hunt_intel.configure(text=self._intel_text())
+            if findings is None:
+                self.hunt_summary.configure(text="The check didn't finish.")
+                return
+            self.hunt_findings = {str(i): f for i, f in enumerate(findings)}
+            label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
+            self.hunt_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
+                                     for iid, f in self.hunt_findings.items()])
+            look = sum(1 for f in findings if f.needs_look)
+            self.hunt_summary.configure(text=(f"{look} thing(s) need a look" if look else "Nothing needs a look")
+                                        + f" ({len(findings)} findings" + (", with the deep check)" if deep else ")"))
+            self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
+
+        self.in_background(work, done)
+
+    def _hunt_selected(self):
+        return self.hunt_findings.get(self.hunt_table.selection() or "")
+
+    def _hunt_path(self) -> Path | None:
+        f = self._hunt_selected()
+        path = ((f.data or {}).get("path") or (f.data or {}).get("exe")) if f else None
+        return Path(path) if path else None
+
+    def _show_hunt_row(self, iid: str) -> None:
+        f = self.hunt_findings.get(iid)
+        if f is None:
+            return
+        tag = {"warn": "suspicious", "ok": "clean"}.get(f.level)
+        lines = [("Status", {"warn": "Needs a look", "note": "Note", "ok": "OK"}.get(f.level, f.level), tag),
+                 ("Area", f.area, None), ("Finding", f.title, None)] + [("Why", d, None) for d in f.details]
+        self.hunt_detail.show(lines)
+        self._hunt_url = f.vt_link
+        url = f.vt_link or ""
+        self.hunt_link.configure(state="normal" if url else "disabled",
+                                 text="Open GTI report" if "/collection/" in url else "View on VirusTotal"
+                                 if "virustotal.com" in url else "MITRE ATT&CK" if "attack.mitre" in url
+                                 else "Open LOLDrivers" if "loldrivers" in url else "Open report")
+        self.hunt_fix.configure(text=f.fix_label or "Open...", state="normal" if f.fix else "disabled")
+        path = self._hunt_path()
+        exists = bool(path and path.exists())
+        self.hunt_location.configure(state="normal" if exists else "disabled")
+        self.hunt_defender.configure(state="normal" if exists and path.is_file() else "disabled")
+
+    def _hunt_fix(self) -> None:
+        f = self._hunt_selected()
+        if f is None or not f.fix:
+            return
+        try:
+            protection.apply_fix(f)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(WINDOW_TITLE, f"That didn't work:\n\n{exc}")
 
     def _build_quarantine_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self.tabs, padding=10)

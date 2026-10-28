@@ -19,7 +19,9 @@ GUI_BASE = "https://www.virustotal.com/gui"
 
 
 class VTError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status  # HTTP status, when VirusTotal answered
 
 
 @dataclass
@@ -148,8 +150,13 @@ class VTClient:
 
     def _get(self, path: str) -> dict | None:
         """GET a resource. Returns None when VirusTotal has never seen it."""
+        body = self.api_get(path)
+        return None if body is None else body["data"]
+
+    def api_get(self, path: str, params: dict | None = None) -> dict | None:
+        """GET any API path and return the whole JSON answer (data, meta, links). None for 404."""
         for attempt in range(self.max_retries + 1):
-            resp = self.session.get(f"{API_BASE}{path}", timeout=30)
+            resp = self.session.get(f"{API_BASE}{path}", params=params, timeout=30)
             self._count(path, resp.status_code)
             if resp.status_code == 404:
                 return None
@@ -159,9 +166,9 @@ class VTClient:
             if resp.status_code == 401:
                 raise VTError("VirusTotal rejected the API key (401). Run: atlas set-key")
             if not resp.ok:
-                raise VTError(f"VirusTotal error {resp.status_code}: {resp.text[:200]}")
-            return resp.json()["data"]
-        raise VTError("VirusTotal quota exceeded; gave up after retries")
+                raise VTError(f"VirusTotal error {resp.status_code}: {resp.text[:200]}", resp.status_code)
+            return resp.json()
+        raise VTError("VirusTotal quota exceeded; gave up after retries", 429)
 
     def file_report(self, sha256: str) -> Report:
         data = self._get(f"/files/{sha256}")

@@ -33,6 +33,20 @@ CREATE TABLE IF NOT EXISTS vt_usage (
     throttled INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (day, kind)
 );
+CREATE TABLE IF NOT EXISTS gti_reports (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    report_type TEXT,
+    created INTEGER NOT NULL,
+    techniques TEXT NOT NULL DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS gti_iocs (
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    PRIMARY KEY (kind, value, report_id)
+);
+CREATE INDEX IF NOT EXISTS gti_iocs_value ON gti_iocs (value);
 CREATE TABLE IF NOT EXISTS seen_findings (
     key TEXT PRIMARY KEY,
     first_seen TEXT NOT NULL
@@ -171,6 +185,67 @@ class Store:
             rows = self._conn.execute("SELECT kind, SUM(requests), SUM(throttled) FROM vt_usage WHERE day >= ?"
                                       " GROUP BY kind", (since_day,)).fetchall()
         return {r[0]: (r[1], r[2]) for r in rows}
+
+    # --- Google Threat Intelligence indicators (downloaded with the user's own key; never shared) ---
+
+    def gti_has_report(self, report_id: str) -> bool:
+        with self._lock:
+            return self._conn.execute("SELECT 1 FROM gti_reports WHERE id = ?", (report_id,)).fetchone() is not None
+
+    def gti_save_report(self, report_id: str, name: str, report_type: str | None, created: int,
+                        techniques: list[str], iocs: list[tuple[str, str]]) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("INSERT OR REPLACE INTO gti_reports (id, name, report_type, created, techniques)"
+                               " VALUES (?, ?, ?, ?, ?)", (report_id, name, report_type, created, json.dumps(techniques)))
+            self._conn.executemany("INSERT OR IGNORE INTO gti_iocs (kind, value, report_id) VALUES (?, ?, ?)",
+                                   [(kind, value.lower(), report_id) for kind, value in iocs])
+
+    def gti_prune(self, before: int) -> None:
+        """Forget reports created before this Unix time, and their indicators."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM gti_iocs WHERE report_id IN (SELECT id FROM gti_reports WHERE created < ?)",
+                               (before,))
+            self._conn.execute("DELETE FROM gti_reports WHERE created < ?", (before,))
+
+    def gti_lookup(self, kind: str, values: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """value -> the reports listing it, for the values that are indicators."""
+        found: dict[str, list[sqlite3.Row]] = {}
+        values = sorted({v.lower() for v in values})
+        with self._lock:
+            for i in range(0, len(values), 500):
+                chunk = values[i:i + 500]
+                rows = self._conn.execute(
+                    "SELECT i.value, r.id, r.name, r.report_type, r.created FROM gti_iocs i JOIN gti_reports r"
+                    f" ON r.id = i.report_id WHERE i.kind = ? AND i.value IN ({','.join('?' * len(chunk))})"
+                    " ORDER BY r.created DESC", (kind, *chunk)).fetchall()
+                for row in rows:
+                    found.setdefault(row["value"], []).append(row)
+        return found
+
+    def gti_reports_using(self, technique: str, limit: int = 3) -> list[sqlite3.Row]:
+        """Recent reports that list this ATT&CK technique (or a sub-technique of it)."""
+        with self._lock:
+            return self._conn.execute("SELECT id, name, created FROM gti_reports WHERE techniques LIKE ?"
+                                      " ORDER BY created DESC LIMIT ?", (f'%"{technique}%', limit)).fetchall()
+
+    def gti_stats(self) -> tuple[int, int]:
+        """(reports, indicators) on hand."""
+        with self._lock:
+            return (self._conn.execute("SELECT COUNT(*) FROM gti_reports").fetchone()[0],
+                    self._conn.execute("SELECT COUNT(*) FROM gti_iocs").fetchone()[0])
+
+    def known_hashes(self) -> dict[str, str]:
+        """sha256 -> a path, for every file Atlas has hashed or scanned on this PC."""
+        with self._lock:
+            rows = self._conn.execute("SELECT sha256, path FROM file_hashes UNION ALL "
+                                      "SELECT sha256, path FROM scans WHERE sha256 IS NOT NULL").fetchall()
+        return {r[0].lower(): r[1] for r in rows}
+
+    def download_urls(self, limit: int = 2000) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT DISTINCT source_url FROM scans WHERE source_url IS NOT NULL"
+                                      " ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [r[0] for r in rows]
 
     # --- Findings already reported (system checks) -----------------------------
 

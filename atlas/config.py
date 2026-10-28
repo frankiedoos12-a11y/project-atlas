@@ -131,6 +131,11 @@ class Settings:
     system_check_minutes: int = 60
     # Look for a newer Project Atlas on GitHub once a day.
     check_for_updates: bool = True
+    # With a Google Threat Intelligence key: download indicators from Google's Windows threat reports of
+    # the last gti_days days once a day, match them against this PC, and show which reports mention a
+    # flagged file. Does nothing on a key without GTI access.
+    gti_enabled: bool = True
+    gti_days: int = 90
     # Disk space tab: where to look, and what counts as big or worth de-duplicating.
     space_scan_folders: list[str] = field(default_factory=lambda: [str(Path.home())])
     big_file_min_mb: int = 500

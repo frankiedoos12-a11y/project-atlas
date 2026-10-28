@@ -127,7 +127,7 @@ def _look_up(scanner: Scanner, item: RunningFile) -> None:
         r.file_report = scanner.lookup("file", r.sha256)
         scanner.judge_report(r, r.file_report, "This file")
         if r.verdict in (Verdict.MALICIOUS, Verdict.SUSPICIOUS):
-            r.behaviour = scanner.behaviour(r.sha256)
+            scanner.explain(r)
     except VTError as exc:
         r.raise_to(Verdict.ERROR, str(exc))
     except Exception as exc:  # network trouble: report it, keep going
@@ -179,7 +179,7 @@ def judge_files(scanner: Scanner, files: list[RunningFile], progress: Callable[[
             if sig and sig.valid:
                 rep = f.result.file_report
                 f.result.verdict = Verdict.CLEAN
-                f.result.behaviour = []
+                f.result.behaviour, f.result.gti = [], []
                 f.result.reasons = [f"{rep.malicious + rep.suspicious} of {rep.total} engines flagged it, but it is "
                                     f"validly signed by {sig.signer}, and a lone detection on a signed file is "
                                     "usually a false alarm"]
@@ -243,7 +243,13 @@ class NewProgramWatcher:
 
         pids = set(psutil.pids())
         new, self._known_pids = pids - self._known_pids, pids
-        if self.paused or self.scanner.vt is None or not new:
+        if self.paused or not new:
+            return
+        try:
+            self._check_command_lines(new)
+        except Exception:  # the VirusTotal check below must still run
+            log.exception("Command-line check failed")
+        if self.scanner.vt is None:
             return
         fresh: dict[str, RunningFile] = {}
         for pid in new:
@@ -277,6 +283,20 @@ class NewProgramWatcher:
             link = r.file_report.gui_link if r.file_report and r.file_report.found else None
             self.on_finding(f"Atlas: {f.verdict.value} program just started",
                             f"{f.path.name}\n{r.threat_text or r.reasons[0]}\nSee Running now to end it.", link)
+
+
+    def _check_command_lines(self, pids: set[int]) -> None:
+        """Suspicious command lines (encoded PowerShell, Word starting a shell...) the moment they start."""
+        from atlas import cmdlines
+
+        procs = [p for p in (cmdlines.process(pid) for pid in pids) if p]
+        for f in cmdlines.evaluate(procs):
+            if f.level != "warn" or f.key in self._told:
+                continue
+            self._told.add(f.key)
+            log.warning("Suspicious command line: %s", f.title)
+            command = next((d for d in f.details if d.startswith("Command line:")), "")
+            self.on_finding(f"Atlas: {f.title}", f"{f.details[0]}\n{command[:180]}", None)
 
 
 def end_processes(pids: set[int]) -> list[str]:

@@ -325,7 +325,7 @@ def test_install_kind(tmp_path):
 
 def test_latest_version():
     class Session:
-        def get(self, url, timeout):
+        def get(self, url, timeout, params=None):
             assert url.endswith("/atlas/__init__.py")
             return types.SimpleNamespace(text='"""x"""\n__version__ = "9.1.0"\n', raise_for_status=lambda: None)
 
@@ -348,7 +348,7 @@ def test_vt_client_counts_requests():
     class Session:
         headers = {}
 
-        def get(self, url, timeout):
+        def get(self, url, timeout, params=None):
             return types.SimpleNamespace(status_code=404, ok=False, text="")
 
     client = VTClient("key", session=Session())
@@ -370,6 +370,9 @@ def test_system_monitor_alerts_only_on_new(monkeypatch, store):
 
     current = [Finding("Defender", "PUA blocking is off", WARN, ["why"], key="defender:pua:off")]
     monkeypatch.setattr(protection, "check_system", lambda scanner=None: list(current))
+    from atlas import hunt
+
+    monkeypatch.setattr(hunt, "check_hunt", lambda scanner, *a, **k: [])
     told = []
     monitor = SystemMonitor(None, store, 60, lambda *a: told.append(a))
     monitor.check()  # first run: a quiet baseline
@@ -409,6 +412,9 @@ def test_new_program_watcher(monkeypatch, tmp_path, make_scanner):
 
     monkeypatch.setattr(psutil, "pids", lambda: list(running))
     monkeypatch.setattr(psutil, "Process", Proc)
+    from atlas import cmdlines
+
+    monkeypatch.setattr(cmdlines, "process", lambda pid: None)  # command lines have their own test
     told = []
     watcher = NewProgramWatcher(scanner, lambda *a: told.append(a))
     watcher._known_pids = {1, 2}

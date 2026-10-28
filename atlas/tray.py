@@ -95,7 +95,8 @@ class RunningMonitor:
 
 
 class SystemMonitor:
-    """Re-runs the Protection checks (Defender, browser hijacks, proxy, hosts file, DNS) every so often.
+    """Re-runs the Protection checks (Defender, browser hijacks, proxy, hosts file, DNS) and the threat hunt
+    (command lines, certificates, drivers, open ports, user folders, GTI matches) every so often.
 
     Alerts when a problem appears that wasn't there before. The very first run only records what's
     already there (it's listed in the Protection tab and the tray menu, without a pop-up for each).
@@ -129,6 +130,7 @@ class SystemMonitor:
         self._wake.set()
 
     def check(self) -> None:
+        from atlas.hunt import check_hunt
         from atlas.protection import check_system
 
         try:
@@ -136,6 +138,10 @@ class SystemMonitor:
         except Exception:
             log.exception("System check failed")
             return
+        try:
+            findings += check_hunt(self.scanner)  # also downloads new GTI reports once a day
+        except Exception:
+            log.exception("Threat hunt failed")
         warnings = [f for f in findings if f.needs_look and f.key]
         self.needs_look = len(warnings)
         first_run = not self.store.has_seen_findings()
@@ -197,7 +203,7 @@ class AtlasTray:
             item(lambda _: self._status(), None, enabled=False),
             item(lambda _: f"Alert: {self.alert}", None, enabled=False, visible=lambda _: self.alert is not None),
             item("Clear alert", self._clear_alert, visible=lambda _: self.alert is not None),
-            item(lambda _: f"Protection: {self.system.needs_look} thing(s) need a look", lambda: launch_gui(),
+            item(lambda _: f"Protection and threat hunt: {self.system.needs_look} thing(s) need a look", lambda: launch_gui(),
                  visible=lambda _: self.system.needs_look > 0),
             item(lambda _: f"Update to Project Atlas {self.update_available}", self._update,
                  visible=lambda _: self.update_available is not None),
@@ -205,7 +211,7 @@ class AtlasTray:
             item("Pause protection", self._toggle_pause, checked=lambda _: self.guard.paused),
             item("Check startup items now", self._check_autoruns, enabled=lambda _: self.monitor is not None),
             item("Check running programs and network now", self._check_running),
-            item("Check Defender, browsers and network settings now", self._check_system),
+            item("Check Defender, browsers, network settings and threat hunt now", self._check_system),
             item("Scan watched folders now", self._scan_folders, enabled=lambda _: self.busy is None),
             item("Check link on clipboard", self._check_clipboard_link),
             pystray.Menu.SEPARATOR,
@@ -263,8 +269,8 @@ class AtlasTray:
 
     def _check_system(self, icon, item) -> None:
         self.system.check_now()
-        toast("Atlas: checking Defender, browsers and network settings",
-              "You'll hear back if something new needs a look. The Protection tab shows everything.")
+        toast("Atlas: checking Defender, browsers, network settings and threat hunt",
+              "You'll hear back if something new needs a look. The Protection and Threat hunt tabs show everything.")
 
     def _watch_for_updates(self) -> None:
         from atlas import updates

@@ -160,6 +160,45 @@ The tray re-runs these checks every hour (`system_check_minutes`) and pops up an
 
 The **Installed** tab lists what's installed, the same list as *Settings > Apps*. Atlas looks up each program's main file on VirusTotal and recognises well-known adware and "potentially unwanted programs" by name (OneLaunch, Wave Browser, Web Companion, Restoro, PC optimisers...). When the engines' consensus is *adware* or *PUA*, it's shown as **UNWANTED** rather than malware: a nuisance that's best removed, not a break-in. **Uninstall...** runs the program's own uninstaller after asking you. `atlas installed` prints the list.
 
+## 9. Threat hunt
+
+A hash lookup can only judge files. The **Threat hunt** tab looks for what it can't see:
+
+- **Suspicious command lines.** Attacks often run inside Windows' own clean programs, so Atlas reads how each one was started and flags the giveaways. The rules follow the open Sigma and LOLBAS projects, and each finding names its MITRE ATT&CK technique. Examples:
+  - encoded or hidden PowerShell, and PowerShell downloading and running code
+  - commands pasted into the Run box by fake CAPTCHA ("ClickFix") pages
+  - `mshta`, `rundll32`, `regsvr32`, `certutil` and `bitsadmin` fetching or running code
+  - Word, Outlook or a PDF reader starting a shell
+  - backups being deleted, the firewall or Defender being switched off, new administrators
+  - a "svchost.exe" running from outside the Windows folder
+
+  The tray also checks every new program's command line the moment it starts and alerts you, even without a VirusTotal key.
+- **Root certificates.** Every trusted root in your account and the machine is compared with Microsoft's own trusted-root list, which Windows keeps up to date. Known spying certificates (Superfish, eDellRoot...), certificates Microsoft has blocked and recently added unknown roots need a look. Antivirus web shields, debugging proxies and government roots (DoD InstallRoot) are named for what they are.
+- **Drivers and services.** Loaded drivers are matched against the [LOLDrivers](https://www.loldrivers.io) list of known-vulnerable and malicious drivers (downloaded weekly). Atlas also shows whether Microsoft's vulnerable driver blocklist and Memory integrity are on. Drivers and services installed in the last 30 days are flagged when they run a script or a program from a user folder, or an unsigned program from ProgramData.
+- **Open doors.** Programs accepting connections from the network, with remote-access tools (AnyDesk, TeamViewer, ScreenConnect, NetSupport...) called out. Atlas checks that Windows Firewall is on, and lists inbound firewall rules that let in programs from user folders, or programs that are gone.
+- **Programs in user folders.** Programs running from AppData, Temp, Downloads or ProgramData that aren't validly signed. These are louder when they run from Temp or Downloads or are less than a week old. Atlas also finds programs hidden in another file's invisible "alternate data stream".
+
+Programs these checks turn up are looked up on VirusTotal. With a VirusTotal Enterprise / Google Threat Intelligence key, every loaded driver is looked up too.
+
+**Google Threat Intelligence.** With a GTI key, Atlas downloads the indicators from Google's own threat reports about Windows from the last 90 days (`gti_days`), once a day: file hashes, domains, URLs, IP addresses and ATT&CK techniques. It then matches them on this PC, with no extra lookups, against:
+- every file Atlas has hashed (running programs, DLLs, drivers, startup items, downloads)
+- the sites in your browsers' history
+- download sources
+- live connections
+
+A match shows the report and links to it. Command-line findings say which recent GTI reports use the same technique, and flagged files list the GTI reports and threat actors that mention them. The reports stay on your PC and are never shared. On a key without GTI, all of this switches itself off. `atlas gti sync` downloads new reports now.
+
+**Deep check (administrator).** Some things Windows only shows an administrator. **Deep check (administrator)...** asks Windows for permission and starts a small collector that only reads:
+- Defender's exclusion list
+- the DNS cache (matched against GTI and VirusTotal)
+- the Security log: failed sign-ins, new accounts, new administrators, the log being cleared
+- the command lines of system processes
+- WMI event subscriptions
+
+It needs no VirusTotal key, so it works even if Windows asks for a different administrator account.
+
+The tray runs the threat hunt with the Protection checks every hour and alerts you to anything new. `atlas hunt` prints it (`--admin` adds the deep check).
+
 ## Updates and VirusTotal usage
 
 The window's header shows how many VirusTotal lookups Atlas has made today and this month (a free key allows 500 a day; answers Atlas already has don't count). `atlas quota` breaks it down.
@@ -168,12 +207,13 @@ Once a day the tray checks GitHub for a newer version (`check_for_updates`). Whe
 
 ## The Atlas window
 
-Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has nine tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has ten tabs:
 
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
 - **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
 - **Installed**: installed programs, with adware and unwanted software called out, and **Uninstall...** (see above).
 - **Protection**: Defender, browser start pages and search, proxy, hosts file and DNS, each with a fix button (see above).
+- **Threat hunt**: command lines, root certificates, drivers, open ports, user-folder programs, threat-intel matches and the administrator deep check (see above).
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
 - **Cleanup**: finds junk and leftovers with no home (see below). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
@@ -187,11 +227,11 @@ The header shows whether protection is running, whether your VirusTotal key is c
 The globe is **blue** while protecting, **grey** while paused, and **red** after an alert (until you choose *Clear alert*). Left-click it to open the Atlas window, or right-click it for:
 
 - Open Project Atlas
-- *Protection: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
+- *Protection and threat hunt: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
 - Pause protection
 - Check startup items now
 - Check running programs and network now
-- Check Defender, browsers and network settings now
+- Check Defender, browsers, network settings and threat hunt now
 - Scan watched folders now
 - Check link on clipboard
 - Open activity log / quarantine folder / settings file
@@ -216,6 +256,8 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas second-opinion FILE...` | Ask Microsoft Defender to scan files (report only) |
 | `atlas quota` | VirusTotal lookups Atlas made today and this month |
 | `atlas update` | Check for a newer version (`--now` to update an installed copy) |
+| `atlas hunt` | Command lines, certificates, drivers, open ports, user-folder programs and threat intel (`--admin` adds the deep check, `--all` lists what's fine too) |
+| `atlas gti` | Google Threat Intelligence reports on this PC (`atlas gti sync` downloads new ones) |
 | `atlas cleanup` | Report junk that can be removed (read-only; clean from the window) |
 | `atlas space` | Report duplicate and big files (read-only; act from the window) |
 | `atlas browsers` | List notification sites and extensions (read-only; act from the window) |
@@ -233,7 +275,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Where things live
 
-- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running and Protection checks run, new-program alerts, update checks)
+- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running, Protection and threat hunt checks run, new-program alerts, update checks, Google Threat Intelligence)
 - History, cache, quarantine, backups, log: `%LOCALAPPDATA%\ProjectAtlas\`
 - API key: Windows Credential Manager, entry `ProjectAtlas`
 
@@ -241,7 +283,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Privacy
 
-`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens.
+`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key.
 
 ## Development
 
