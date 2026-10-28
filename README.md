@@ -2,6 +2,33 @@
 
 VirusTotal-powered protection for Windows 11. It runs **alongside** Windows Defender, not instead of it. No ads, no upsells, and all data stays on your PC.
 
+## Install
+
+On any Windows 10 or 11 PC, open **PowerShell** (Start menu, type *PowerShell*, press Enter; no administrator rights needed) and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/frankiedoos12-a11y/project-atlas/main/install.ps1 | iex
+```
+
+It installs Python 3.13 for your user if needed, downloads Atlas to `%LOCALAPPDATA%\Programs\ProjectAtlas`, and asks for your VirusTotal API key once (each PC keeps its key in its own Windows Credential Manager). Then it sets everything up and starts Atlas. You can [read the installer](install.ps1) first; it's short.
+
+- **Update:** run the same line again. Settings, history and your key are kept.
+- **Uninstall:** Start menu > **Uninstall Project Atlas**. Your settings, history, quarantine and key are kept in case you reinstall; it tells you where they are.
+
+## Starting and using Atlas
+
+After installing you don't need to start anything: **Atlas is already running**, and it starts by itself every time you sign in. You'll find:
+
+| What | Where | What it's for |
+|---|---|---|
+| **The tray globe** | Next to the clock (if it's hidden, click the **^** arrow there) | Protection is running while it's there. Click it to open the window; right-click for quick actions. |
+| **Project Atlas** | Start menu | Opens the Atlas window: startup items, cleanup, disk space, browsers, quarantine. |
+| **Project Atlas protection (tray)** | Start menu | Starts protection again if you chose *Quit* in the tray. |
+| **Scan with Project Atlas** | Right-click any file or folder in Explorer (Windows 11: *Show more options*) | Checks it with VirusTotal right now. |
+| **`atlas` commands** | Type them in any **PowerShell** or **Command Prompt** window | The same features as text, e.g. `atlas scan C:\Users\me\Downloads\setup.exe`. See [Commands](#commands). |
+
+`atlas` works in any folder, but only in windows opened **after** installing: if a window was already open, close it and open a new one. To check, type `atlas --version`.
+
 What Atlas does:
 
 ## 1. Download guard
@@ -97,45 +124,11 @@ The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on
 - **Privacy:** pages you open are checked without their `?query` and `#fragment`, which often hold search terms or login tokens. Only links you right-click are checked in full. Addresses on your PC or home network (`192.168.x.x`, `localhost`, `router`, `*.local`) are never sent anywhere.
 - Unknown sites aren't blocked, only marked `?` on the globe, so new and small sites still open normally.
 
-**Set up:** the installer connects the helper (`atlas browser-extension on`). Then, once per browser: open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked** and choose the `extension` folder in Atlas's program folder. Atlas's own ad-spam finder recognizes it, so it isn't flagged for being loaded unpacked.
-
-## Install
-
-On any Windows 10 or 11 PC, open **PowerShell** (no administrator rights needed) and paste:
-
-```powershell
-irm https://raw.githubusercontent.com/frankiedoos12-a11y/project-atlas/main/install.ps1 | iex
-```
-
-It installs Python 3.13 for your user if needed, downloads Atlas to `%LOCALAPPDATA%\Programs\ProjectAtlas`, asks for your VirusTotal API key once, and sets everything up: tray at sign-in, right-click scanning and the browser extension helper. **Run the same line again to update**; settings, history and your key are kept. You can [read the installer](install.ps1) first; it's short.
-
-Each PC keeps its own key in its own Windows Credential Manager.
-
-### Uninstall
-
-```powershell
-$a = "$env:LOCALAPPDATA\Programs\ProjectAtlas\.venv\Scripts\atlas.exe"
-& $a autostart off; & $a context-menu off; & $a browser-extension off
-Get-Process atlas-tray, atlas-gui -ErrorAction SilentlyContinue | Stop-Process
-Remove-Item "$env:LOCALAPPDATA\Programs\ProjectAtlas" -Recurse -Force
-```
-
-Settings and history stay in `%APPDATA%\ProjectAtlas` and `%LOCALAPPDATA%\ProjectAtlas` until you delete them. The key stays in Credential Manager (entry `ProjectAtlas`).
-
-### From source (for development)
-
-```powershell
-git clone https://github.com/frankiedoos12-a11y/project-atlas.git
-cd project-atlas
-py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\atlas.exe set-key
-.\.venv\Scripts\atlas-tray.exe
-```
+**Set up:** the installer connects the helper (`atlas browser-extension on`). Then, once per browser: open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked**, paste `%LOCALAPPDATA%\Programs\ProjectAtlas\extension` into the folder box's address bar, press Enter and click **Select Folder**. Atlas's own ad-spam finder recognizes it, so it isn't flagged for being loaded unpacked.
 
 ## The Atlas window
 
-Click the tray globe (or run `atlas-gui.exe`) to open it. It has six tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has six tabs:
 
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
@@ -161,6 +154,8 @@ The globe is **blue** while protecting, **grey** while paused, and **red** after
 - Quit
 
 ## Commands
+
+Type these in any PowerShell or Command Prompt window, from any folder (open a new window after installing). `atlas --help` lists them, and `atlas COMMAND --help` explains one.
 
 | Command | What it does |
 |---|---|
@@ -197,9 +192,26 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Development
 
+To work on Atlas from a clone instead of the installer:
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+git clone https://github.com/frankiedoos12-a11y/project-atlas.git
+cd project-atlas
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
+
+A clone gets no Start menu entries and no `atlas` on PATH. Run its programs by path, from inside the `project-atlas` folder:
+
+```powershell
+.\.venv\Scripts\atlas.exe set-key          # once
+.\.venv\Scripts\atlas.exe autostart on     # optional: start this copy at sign-in
+.\.venv\Scripts\atlas-tray.exe             # start protection in the tray
+.\.venv\Scripts\atlas-gui.exe              # open the window
+.\.venv\Scripts\python.exe -m pytest -q    # run the tests
+```
+
+Don't run an installed copy and a clone at the same time. Only one copy's protection runs, and the right-click menu and browser helper point at whichever copy switched them on last.
 
 ## License
 

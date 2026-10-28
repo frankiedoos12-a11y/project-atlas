@@ -47,6 +47,36 @@
         return $null
     }
 
+    # Adds or removes a folder in the user's PATH. Read and written without expanding
+    # %VARIABLES%, so entries like %USERPROFILE%\bin keep working.
+    function Set-UserPathEntry([string]$dir, [bool]$present) {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+        try {
+            $old = [string]$key.GetValue("Path", "", "DoNotExpandEnvironmentNames")
+            $parts = @($old -split ";" | Where-Object { $_ -and ($_.TrimEnd("\") -ne $dir.TrimEnd("\")) })
+            if ($present) { $parts += $dir }
+            $new = $parts -join ";"
+            if ($new -eq $old) { return }
+            $key.SetValue("Path", $new, "ExpandString")
+        } finally { $key.Close() }
+        # Tell Windows, so terminals opened from now on see the change without signing out.
+        if (-not ("AtlasEnv" -as [type])) {
+            Add-Type -Namespace "" -Name AtlasEnv -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
+        }
+        $r = [UIntPtr]::Zero
+        [AtlasEnv]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$r) | Out-Null
+    }
+
+    function New-Shortcut([string]$path, [string]$target, [string]$arguments, [string]$description, [string]$icon) {
+        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
+        $link.TargetPath = $target
+        $link.Arguments = $arguments
+        $link.WorkingDirectory = $InstallDir
+        $link.Description = $description
+        if ($icon -and (Test-Path $icon)) { $link.IconLocation = $icon }
+        $link.Save()
+    }
+
     if ([Environment]::OSVersion.Platform -ne "Win32NT") { throw "Project Atlas runs on Windows only." }
 
     Say "Looking for Python 3.12 or newer"
@@ -118,14 +148,33 @@
     & $Atlas context-menu on | Out-Null
     & $Atlas browser-extension on | Out-Null
 
+    Say "Adding Project Atlas to the Start menu, and the atlas command to terminals"
+    $Bin = Join-Path $InstallDir "bin"
+    New-Item -ItemType Directory -Path $Bin -Force -ErrorAction Stop | Out-Null
+    # A one-line forwarder: only "atlas" goes on PATH, not the environment's own python.exe and pip.
+    Set-Content -Path (Join-Path $Bin "atlas.cmd") -Value "@`"%~dp0..\.venv\Scripts\atlas.exe`" %*" -Encoding ASCII -ErrorAction Stop
+    Set-UserPathEntry $Bin $true
+    if (($env:PATH -split ";") -notcontains $Bin) { $env:PATH = "$env:PATH;$Bin" }  # this window too
+    $icon = & $VenvPython -c "from atlas.contextmenu import icon_path; print(icon_path())"
+    $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Project Atlas"
+    New-Item -ItemType Directory -Path $menu -Force -ErrorAction Stop | Out-Null
+    New-Shortcut (Join-Path $menu "Project Atlas.lnk") (Join-Path $Venv "Scripts\atlas-gui.exe") "" "Open the Project Atlas window" $icon
+    New-Shortcut (Join-Path $menu "Project Atlas protection (tray).lnk") (Join-Path $Venv "Scripts\atlas-tray.exe") "" "Start Project Atlas protection in the tray" $icon
+    New-Shortcut (Join-Path $menu "Uninstall Project Atlas.lnk") (Join-Path $PSHOME "powershell.exe") "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'uninstall.ps1')`" -Pause" "Remove Project Atlas from this PC" $icon
+
     Say "Starting Project Atlas in the tray"
     Start-Process (Join-Path $Venv "Scripts\atlas-tray.exe")
 
     $version = & $VenvPython -c "import atlas; print(atlas.__version__)"
     Write-Host ""
-    Write-Host "Project Atlas $version is installed and running (look for the blue globe by the clock)." -ForegroundColor Green
-    Write-Host "  Program:  $InstallDir"
-    Write-Host "  Update:   run the same install line again"
+    Write-Host "Project Atlas $version is installed and running (look for the blue globe by the clock;" -ForegroundColor Green
+    Write-Host "if it isn't there, click the ^ arrow next to the clock)." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Open the window:  Start menu > Project Atlas, or click the globe"
+    Write-Host "  Commands:         type  atlas --help  in any PowerShell or Command Prompt window"
+    Write-Host "  Update:           run the same install line again"
+    Write-Host "  Uninstall:        Start menu > Uninstall Project Atlas"
+    Write-Host "  Program folder:   $InstallDir"
     Write-Host ""
     Write-Host "Optional, once per browser: add the link-checker extension."
     Write-Host "  Open chrome://extensions (or edge://extensions), turn on Developer mode,"
