@@ -15,7 +15,10 @@
 #      menu, connects the browser extension helper, and starts the tray now.
 
 & {
-    $ErrorActionPreference = "Stop"
+    # Not "Stop": in Windows PowerShell that turns anything a program writes to stderr (py's
+    # "no such version", pip warnings) into a fatal error. Programs are judged by their exit
+    # codes instead, and file steps pass -ErrorAction Stop themselves.
+    $ErrorActionPreference = "Continue"
     $ProgressPreference = "SilentlyContinue"  # makes downloads much faster in Windows PowerShell
 
     $Repo = if ($env:ATLAS_REPO) { $env:ATLAS_REPO } else { "frankiedoos12-a11y/project-atlas" }
@@ -69,19 +72,19 @@
 
     Say "Downloading Project Atlas ($Repo, $Branch)"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("atlas-install-" + [Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $tmp | Out-Null
+    New-Item -ItemType Directory -Path $tmp -ErrorAction Stop | Out-Null
     try {
         $zip = Join-Path $tmp "atlas.zip"
-        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip
-        Unblock-File $zip
-        Expand-Archive -Path $zip -DestinationPath $tmp -Force
+        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -ErrorAction Stop
+        Unblock-File $zip -ErrorAction Stop
+        Expand-Archive -Path $zip -DestinationPath $tmp -Force -ErrorAction Stop
         $src = Get-ChildItem -Path $tmp -Directory | Select-Object -First 1
-        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $InstallDir -Force -ErrorAction Stop | Out-Null
         foreach ($old in "atlas", "extension", "tests") {
             $p = Join-Path $InstallDir $old
-            if (Test-Path $p) { Remove-Item $p -Recurse -Force }
+            if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction Stop }
         }
-        Copy-Item -Path (Join-Path $src.FullName "*") -Destination $InstallDir -Recurse -Force
+        Copy-Item -Path (Join-Path $src.FullName "*") -Destination $InstallDir -Recurse -Force -ErrorAction Stop
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -95,7 +98,7 @@
     $Atlas = Join-Path $Venv "Scripts\atlas.exe"
 
     Say "Installing Atlas and its libraries (about a minute the first time)"
-    & $VenvPython -m pip install --quiet --disable-pip-version-check --upgrade pip
+    & $VenvPython -m pip install --quiet --disable-pip-version-check --upgrade pip 2>$null
     & $VenvPython -m pip install --quiet --disable-pip-version-check --editable $InstallDir
     if ($LASTEXITCODE -ne 0) { throw "Installing Atlas's libraries failed (see the messages above)." }
 
