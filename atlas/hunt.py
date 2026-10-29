@@ -119,7 +119,15 @@ def check_hunt(scanner: Scanner, progress: Callable[[str], None] | None = None,
 
     def registry_part() -> list[Finding]:
         findings, spots = registry.check_registry()
-        return findings + registry.watch_changes(scanner.store, spots)
+
+        def judge(path: str):
+            if not Path(path).is_file():
+                return None
+            r = scanner.scan(Path(path), act=False)
+            return r.signature, r.verdict.value, r.file_report.gui_link if r.file_report and r.file_report.found \
+                else None
+
+        return findings + registry.explain_changes(registry.watch_changes(scanner.store, spots), judge)
 
     _part(reg_found, "registry", registry_part)
     found += reg_found

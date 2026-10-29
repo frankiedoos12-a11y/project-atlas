@@ -77,6 +77,7 @@ async function check(url, auto) {
 function pageFor(url, result, mode) {
   const params = new URLSearchParams({
     u: url, v: result.verdict, r: JSON.stringify(result.reasons || []), l: result.vt_link || "", m: mode,
+    p: result.report || "",
   });
   return chrome.runtime.getURL(`warning.html?${params}`);
 }
@@ -124,6 +125,23 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     chrome.storage.session.get("allowed").then(({ allowed = [] }) => {
       allowed.push(msg.host);
       chrome.storage.session.set({ allowed }).then(() => reply({ ok: true }));
+    });
+    return true;
+  }
+  if (msg.type === "trust") {
+    // "Always trust this site": Atlas saves it in its settings; forget cached verdicts for it.
+    ask({ type: "trust", host: msg.host }).then((answer) => {
+      if (answer.ok) {
+        for (const key of cache.keys()) {
+          try {
+            const host = new URL(key).hostname;
+            if (host === answer.site || host.endsWith(`.${answer.site}`)) cache.delete(key);
+          } catch (e) {
+            cache.delete(key);
+          }
+        }
+      }
+      reply(answer);
     });
     return true;
   }

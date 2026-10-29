@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from atlas import config, defender
 from atlas.app import build_scanner, setup_logging
-from atlas.gui import VERDICT_COLORS, DetailBox, Table, open_in_explorer, style_window
+from atlas.gui import VERDICT_COLORS, DetailBox, Table, open_in_explorer, report_mistake, style_window
 from atlas.quarantine import quarantine_file
 from atlas.scanner import ScanResult, Verdict, threat_lines
 
@@ -149,7 +149,8 @@ class ScanWindow:
         self.quarantine_button = ttk.Button(buttons, text="Move to quarantine...", command=self._quarantine)
         for b in (self.vt_button, self.open_button, self.again_button, self.defender_button):
             b.pack(side="left", padx=(0, 6))
-        for b in (self.quarantine_button, self.upload_button):
+        self.mistake_button = ttk.Button(buttons, text="Report a mistake...", command=self._report_mistake)
+        for b in (self.quarantine_button, self.upload_button, self.mistake_button):
             b.pack(side="right", padx=(6, 0))
         self._set_buttons(None)
         self.detail.show([("", "Results appear here as each file is checked. Nothing is moved or deleted "
@@ -231,6 +232,16 @@ class ScanWindow:
         unseen = bool(r and r.file_report is not None and not r.file_report.analyzed)
         self.upload_button.configure(state="normal" if exists and unseen and self.scanner.vt else "disabled")
         self.quarantine_button.configure(state="normal" if exists and not r.action else "disabled")
+        flagged = bool(r and r.verdict in (Verdict.MALICIOUS, Verdict.SUSPICIOUS, Verdict.UNKNOWN))
+        self.mistake_button.configure(state="normal" if flagged else "disabled")
+
+    def _report_mistake(self) -> None:
+        _, r = self._selected()
+        if r is None:
+            return
+        what = r.path.name + (f" (SHA-256 {r.sha256})" if r.sha256 else "")
+        report_mistake(self.root, "File", what, r.verdict.value,
+                       r.reasons + [f"{label}: {text}" for label, text, _ in threat_lines(r)])
 
     def _show(self, iid: str) -> None:
         r = self.results.get(iid)

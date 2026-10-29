@@ -81,6 +81,24 @@ def open_in_explorer(path: Path) -> None:
         subprocess.Popen(["explorer", str(path.parent)])
 
 
+def report_mistake(parent, kind: str, what: str, verdict: str, reasons: list[str]) -> None:
+    """Open a filled-in "Wrong warning" report for the user to read and send (GitHub, or email when the
+    project has a report address). Atlas sends nothing itself."""
+    from atlas import mistakes
+
+    email = mistakes.email_url(kind, what, verdict, reasons)
+    if email and not messagebox.askyesno(WINDOW_TITLE, "Report it on GitHub?\n\nChoose No to send it by email "
+                                                       "instead (no GitHub account needed).", parent=parent):
+        webbrowser.open(email)
+        return
+    if not messagebox.askokcancel(
+            WINDOW_TITLE, f"Atlas opens a report on GitHub in your browser, filled in with: {what}, what Atlas "
+                          f"said and why, and the Atlas version.\n\nRead it, add why you think it's wrong, "
+                          f"then press Create. Nothing is sent until you do.", parent=parent):
+        return
+    webbrowser.open(mistakes.issue_url(kind, what, verdict, reasons))
+
+
 class Table(ttk.Frame):
     """A Treeview with a scrollbar, clickable sortable headings and verdict colours."""
 
@@ -1293,6 +1311,16 @@ class AtlasWindow:
                                                    "it asks VirusTotal and looks for scam tricks.",
                                      style="Summary.TLabel", wraplength=int(1100 * self.scale))
         self.link_result.pack(fill="x", pady=(6, 0))
+        actions = ttk.Frame(checker)
+        actions.pack(fill="x", pady=(6, 0))
+        self.trust_button = ttk.Button(actions, text="Always trust this site...", state="disabled",
+                                       command=self._trust_link_site)
+        self.trust_button.pack(side="left")
+        self.link_mistake = ttk.Button(actions, text="Report a mistake...", state="disabled",
+                                       command=self._link_mistake)
+        self.link_mistake.pack(side="left", padx=6)
+        ttk.Button(actions, text="Trusted sites...", command=self._trusted_sites).pack(side="right")
+        self._link_check = None
 
         bar = ttk.Frame(tab)
         bar.pack(fill="x", pady=(12, 0))
@@ -1365,8 +1393,70 @@ class AtlasWindow:
             self._browser_vt_link = report.gui_link if report and report.found else None
             self.browser_vt.configure(state="normal" if self._browser_vt_link else "disabled")
             self.browser_detail.show(lines)
+            self._link_check = check
+            flagged = verdict in ("malicious", "suspicious", "unknown")
+            self.trust_button.configure(state="normal" if flagged and check.host else "disabled")
+            self.link_mistake.configure(state="normal" if flagged and check.host else "disabled")
 
         self.in_background(lambda: check_link(self.scanner, text), done)
+
+    def _link_mistake(self) -> None:
+        check = self._link_check
+        if check is not None:
+            report_mistake(self.root, "Site", check.host, check.verdict.value, check.reasons)
+
+    def _trust_link_site(self) -> None:
+        from atlas import allowlist
+
+        check = self._link_check
+        if check is None:
+            return
+        site = allowlist.site_of(check.host)
+        if not messagebox.askyesno(WINDOW_TITLE, f"Always trust {site}?\n\nAtlas stops using its own guesses about "
+                                                 "it (look-alike names, brand-new domains), on this PC. It still "
+                                                 "warns if VirusTotal's engines flag it. Remove it again with "
+                                                 "Trusted sites..."):
+            return
+        try:
+            allowlist.trust_site(check.host)
+        except ValueError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc))
+            return
+        self.settings.trusted_sites = config.Settings.load().trusted_sites
+        self.check_link()
+
+    def _trusted_sites(self) -> None:
+        """Your trusted sites, with Remove."""
+        from atlas import allowlist
+
+        box = tk.Toplevel(self.root)
+        box.title("Trusted sites")
+        box.transient(self.root)
+        frame = ttk.Frame(box, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, style="Summary.TLabel", wraplength=int(420 * self.scale),
+                  text="Atlas skips its own guesses about these sites, but still warns if VirusTotal's engines "
+                       "flag them. Sites on Project Atlas's shared allow-list aren't listed here.").pack(anchor="w")
+        sites = tk.Listbox(frame, height=10, font=("Segoe UI", 10), activestyle="none")
+        sites.pack(fill="both", expand=True, pady=8)
+
+        def fill() -> None:
+            sites.delete(0, "end")
+            for site in config.Settings.load().trusted_sites:
+                sites.insert("end", site)
+
+        def remove() -> None:
+            chosen = sites.curselection()
+            if chosen:
+                allowlist.untrust_site(sites.get(chosen[0]))
+                self.settings.trusted_sites = config.Settings.load().trusted_sites
+                fill()
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Remove", command=remove).pack(side="left")
+        ttk.Button(buttons, text="Close", command=box.destroy).pack(side="right")
+        fill()
 
     def _show_browser_mode(self) -> None:
         sites = self.browser_mode.get() == "sites"
@@ -2135,9 +2225,15 @@ class AtlasWindow:
         self.hunt_defender = ttk.Button(buttons, text="Ask Defender", state="disabled",
                                         command=lambda: self._ask_defender(self._hunt_path()))
         self.hunt_defender.pack(side="left")
+        self.hunt_regedit = ttk.Button(buttons, text="Open in Registry Editor", state="disabled",
+                                       command=self._hunt_regedit)
+        self.hunt_regedit.pack(side="left", padx=6)
         self.hunt_link = ttk.Button(buttons, text="Open report", state="disabled",
                                     command=lambda: self._hunt_url and webbrowser.open(self._hunt_url))
         self.hunt_link.pack(side="right")
+        self.hunt_mistake = ttk.Button(buttons, text="Report a mistake...", state="disabled",
+                                       command=self._hunt_mistake)
+        self.hunt_mistake.pack(side="right", padx=6)
         self.hunt_detail = DetailBox(lower)
         self.hunt_detail.pack(fill="both", expand=True)
         panes.add(lower, weight=1)
@@ -2220,6 +2316,31 @@ class AtlasWindow:
         exists = bool(path and path.exists())
         self.hunt_location.configure(state="normal" if exists else "disabled")
         self.hunt_defender.configure(state="normal" if exists and path.is_file() else "disabled")
+        self.hunt_regedit.configure(state="normal" if (f.data or {}).get("registry") else "disabled")
+        self.hunt_mistake.configure(state="normal" if f.level in ("warn", "note") else "disabled")
+
+    def _hunt_mistake(self) -> None:
+        f = self._hunt_selected()
+        if f is not None:
+            report_mistake(self.root, "Finding", f"{f.area}: {f.title}", f.level, f.details)
+
+    def _hunt_regedit(self) -> None:
+        from atlas import registry
+
+        f = self._hunt_selected()
+        location = (f.data or {}).get("registry") if f else None
+        if not location:
+            return
+        import psutil
+
+        if any((p.info["name"] or "").lower() == "regedit.exe" for p in psutil.process_iter(["name"])):
+            messagebox.showinfo(WINDOW_TITLE, "Registry Editor is already open, and it only jumps to a key when it "
+                                              "starts. Close it, then click Open in Registry Editor again.")
+            return
+        try:
+            registry.open_in_regedit(location)
+        except OSError as exc:
+            messagebox.showerror(WINDOW_TITLE, f"Couldn't open Registry Editor:\n\n{exc}")
 
     def _hunt_fix(self) -> None:
         f = self._hunt_selected()

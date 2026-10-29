@@ -11,6 +11,8 @@ Two kinds of request:
   hold search terms, session tokens or email addresses.
 - {"id": 2, "type": "check", "url": "...", "auto": false} a link you chose to check from
   the right-click menu: the full address is checked.
+- {"id": 3, "type": "trust", "host": "outlook.live.com"} "Always trust this site" on the warning
+  page: adds the site's domain (live.com) to `trusted_sites` in the settings.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import struct
 import sys
 from urllib.parse import urlparse
 
-from atlas import __version__, config
+from atlas import __version__, allowlist, config, mistakes
 from atlas.app import build_scanner, setup_logging
 from atlas.links import check_link
 from atlas.scanner import short_url
@@ -65,8 +67,17 @@ def handle(request: dict, scanner) -> dict:
     kind = request.get("type")
     if kind == "ping":
         return {"ok": True, "version": __version__, "key": scanner.vt is not None}
+    if kind == "trust":
+        try:
+            site = allowlist.trust_site(str(request.get("host", "")))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        scanner.settings.trusted_sites = config.Settings.load().trusted_sites
+        return {"ok": True, "site": site}
     if kind != "check":
         return {"error": f"unknown request {kind!r}"}
+    # Read now: a site trusted or removed in the Atlas window counts at once.
+    scanner.settings.trusted_sites = config.Settings.load().trusted_sites
     url = str(request.get("url", ""))
     if not url.lower().startswith(("http://", "https://")):
         return {"verdict": "skipped", "reasons": ["Only web addresses are checked"]}
@@ -75,8 +86,11 @@ def handle(request: dict, scanner) -> dict:
     target = short_url(url) if request.get("auto", True) else url
     check = check_link(scanner, target)
     report = check.url_report if check.url_report and check.url_report.found else check.domain_report
-    return {"verdict": check.verdict.value, "url": check.url, "host": check.host, "reasons": check.reasons,
-            "vt_link": report.gui_link if report and report.found else None}
+    reply = {"verdict": check.verdict.value, "url": check.url, "host": check.host, "reasons": check.reasons,
+             "vt_link": report.gui_link if report and report.found else None}
+    if check.verdict.value in ("malicious", "suspicious", "unknown"):  # only the site's name goes in the report
+        reply["report"] = mistakes.issue_url("Site", check.host, check.verdict.value, check.reasons)
+    return reply
 
 
 def main() -> int:

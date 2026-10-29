@@ -142,6 +142,11 @@ class Settings:
     duplicate_min_mb: int = 10
     # Remote-access programs you use on purpose (e.g. ["TeamViewer"]): Atlas doesn't warn about these.
     trusted_remote_tools: list[str] = field(default_factory=list)
+    # Sites you trust (e.g. ["live.com"]): the link checks skip Atlas's own guesses about them, but still ask
+    # VirusTotal. "Always trust this site" adds to it.
+    trusted_sites: list[str] = field(default_factory=list)
+    # Also trust the sites on Project Atlas's shared allow-list (allowlist.json on GitHub, checked daily).
+    shared_allowlist: bool = True
     # A weekly report (health score, what changed, what Atlas did), written by the tray once a week.
     weekly_report: bool = True
     # Full scan: at most this many new VirusTotal lookups per run (a free key allows 500 a day, 4 a minute).

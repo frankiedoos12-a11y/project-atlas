@@ -22,7 +22,7 @@ import hashlib
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -554,7 +554,47 @@ def change_finding(change: dict) -> Finding:
                     "Changes here happen when you install or update software, and when malware sets itself up. "
                     "Worth a look if you didn't install anything around then."],
                    key=f"reg:change:{change['key'].lower()}:{_digest(change['now'])}",
-                   data={"registry": change["location"]})
+                   data={"registry": change["location"], "path": file_of(change["now"]) or None,
+                         "before": before, "now": change["now"]})
+
+
+VERSION = re.compile(r"\d+(?:\.\d+){1,3}")
+
+
+def version_update(before: str | None, now: str) -> str | None:
+    """The new version when a value changed only in its version numbers (e.g. Chrome's 155.0... folder became
+    156.0...), otherwise None."""
+    if before is None or VERSION.sub("#", before).lower() != VERSION.sub("#", now).lower():
+        return None
+    return next((n for n, b in zip(VERSION.findall(now), VERSION.findall(before)) if n != b), None)
+
+
+def explain_changes(findings: list[Finding], judge) -> list[Finding]:
+    """Look at the program each changed value runs. `judge(path)` returns (signature, verdict, VirusTotal link)
+    or None when the file is missing. A signed program that VirusTotal calls clean, changed only to a newer
+    version of itself, is a software update: that drops to a note."""
+    out = []
+    for f in findings:
+        path = (f.data or {}).get("path")
+        judged = judge(path) if f.area == "Registry changes" and path else None
+        if judged is None:
+            out.append(f)
+            continue
+        signature, verdict, link = judged
+        signed = signature is not None and signature.valid and signature.signer
+        program = [f"Program: {path}",
+                   f"Signed by {signature.signer}" if signed else "Not signed" if signature is None or
+                   signature.status == "NotSigned" else f"Signature problem: {signature.status}",
+                   f"VirusTotal: {verdict}"]
+        new = version_update(f.data.get("before"), f.data.get("now", ""))
+        if f.level == WARN and new and signed and verdict == "clean":
+            spot = f.title.split(":", 1)[0]
+            out.append(replace(f, title=f"{spot}: a {signature.signer} program updated itself to {new}", level=NOTE,
+                               details=["Only the version changed, and the program is signed and clean, so this "
+                                        "is a normal software update."] + program + f.details[:3], vt_link=link))
+        else:
+            out.append(replace(f, details=program + f.details, vt_link=link))
+    return out
 
 
 def watch_changes(store, spots: list[Spot], now: datetime | None = None) -> list[Finding]:
@@ -566,3 +606,26 @@ def watch_changes(store, spots: list[Spot], now: datetime | None = None) -> list
     store.cache_extra("registry", "snapshot", {"values": snapshot(spots), "changes": recent[-200:]})
     latest = {c["key"]: c for c in recent}  # the newest change per value
     return [change_finding(c) for c in latest.values()]
+
+
+# --- Registry Editor ----------------------------------------------------------------------------------------------
+
+REGEDIT_KEY = r"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit"
+HIVE_NAMES = {"HKLM": "HKEY_LOCAL_MACHINE", "HKCU": "HKEY_CURRENT_USER"}
+
+
+def regedit_path(location: str) -> str:
+    """'HKLM\\Software\\X > Name' as Registry Editor's address bar writes it: 'Computer\\HKEY_LOCAL_MACHINE\\...'."""
+    key = location.split(" > ", 1)[0].strip()
+    hive, _, rest = key.partition("\\")
+    return "Computer\\" + HIVE_NAMES.get(hive.upper(), hive) + ("\\" + rest if rest else "")
+
+
+def open_in_regedit(location: str) -> None:
+    """Open Registry Editor at this key. It can't be told where to open, but it reopens the last key it showed,
+    so Atlas sets that first (the same trick as Sysinternals' RegJump). Only looks: nothing else is changed."""
+    import winreg
+
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGEDIT_KEY) as key:
+        winreg.SetValueEx(key, "LastKey", 0, winreg.REG_SZ, regedit_path(location))
+    os.startfile("regedit.exe")  # through the shell, so Windows can ask for administrator rights

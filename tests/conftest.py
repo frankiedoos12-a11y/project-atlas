@@ -48,6 +48,9 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("ATLAS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("ATLAS_VT_API_KEY", raising=False)
+    from atlas import allowlist
+
+    monkeypatch.setattr(allowlist, "shared_sites", lambda store=None: {})  # never download it in tests
 
 
 @pytest.fixture

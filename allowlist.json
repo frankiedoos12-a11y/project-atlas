@@ -1,0 +1,6 @@
+{
+  "about": "Project Atlas's shared allow-list. Every copy of Atlas downloads it once a day. A site here skips Atlas's own guesses (brand names on another domain, look-alike letters, brand-new domains); VirusTotal is still asked. Add a site only after checking a 'Wrong warning' report. Whole registered domains only: example.com, not www.example.com.",
+  "sites": {
+    "live.com": "Microsoft: Outlook.com and Microsoft account sign-in"
+  }
+}

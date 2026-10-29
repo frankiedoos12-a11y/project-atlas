@@ -134,9 +134,17 @@ The **Browsers** tab covers Chrome, Edge, Brave, Opera and Firefox, every profil
 
 `atlas browsers` and `atlas check-url LINK` do the same from the console.
 
+### When Atlas gets it wrong
+
+Atlas's own guesses (a brand name on someone else's domain, look-alike letters, a brand-new domain) are sometimes wrong. Each brand already knows its other real domains (Outlook's sign-in at `outlook.live.com` is Microsoft's), and there are three more ways out:
+
+- **Always trust this site** (on the browser warning page, and in the link checker) trusts the whole domain on this PC: `outlook.live.com` trusts `live.com`. Atlas skips its own guesses about it but still asks VirusTotal, so a trusted site that turns malicious is still flagged. **Trusted sites...** in the link checker lists them, with **Remove** (`trusted_sites` in the settings).
+- **Report a mistake** (on the browser warning page, the link checker, the scan window and the threat hunt) opens a filled-in *Wrong warning* report on GitHub for you to read and send. It holds only the site's name (never the full address), or the file's name and SHA-256, what Atlas said and why, and the Atlas version; your user folder is replaced by `%USERPROFILE%`. Nothing is sent until you press *Create*.
+- **The shared allow-list.** When a report turns out to be a mistake, the site goes into [`allowlist.json`](allowlist.json) in this repository. Every copy of Atlas downloads it once a day and trusts what's on it the same way, with no new release needed (`shared_allowlist` turns this off).
+
 ### Browser extension: check links as you open them
 
-The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on your PC about every page before you use it. A dangerous or suspicious page (including a brand-new site, the kind malicious ads lead to) is replaced by a warning, with *Go back to safety* or *Continue anyway* (remembered until the browser restarts). The toolbar globe shows the current page's verdict, and right-clicking any link gives **Check link with Project Atlas**.
+The **Project Atlas Link Checker** extension (Chrome, Edge, Brave) asks Atlas on your PC about every page before you use it. A dangerous or suspicious page (including a brand-new site, the kind malicious ads lead to) is replaced by a warning, with *Go back to safety*, *Continue anyway* (remembered until the browser restarts), *Always trust this site* and *Report a mistake* (see above). The toolbar globe shows the current page's verdict, and right-clicking any link gives **Check link with Project Atlas**.
 
 - **Your key never enters the browser.** The extension talks to a small Atlas helper on your PC (Chrome's *native messaging*), which uses the key from Credential Manager.
 - **Privacy:** pages you open are checked without their `?query` and `#fragment`, which often hold search terms or login tokens. Only links you right-click are checked in full. Addresses on your PC or home network (`192.168.x.x`, `localhost`, `router`, `*.local`) are never sent anywhere.
@@ -221,7 +229,7 @@ A hash lookup can only judge files. The **Threat hunt** tab looks for what it ca
   - *Office:* "enable all macros", macros from the internet allowed by policy, Protected View switched off, and trusted locations in Downloads, the Desktop, Documents or a network share (Word, Excel, PowerPoint, Outlook and the rest, set by you or by a policy)
   - *UAC and Remote Desktop:* UAC off or set to never ask, no secure desktop, and Remote Desktop on, especially without Network Level Authentication
 
-  Each finding says when its key last changed. Atlas also remembers every value it watches: when one appears or changes, the tray alerts you once and the change stays listed under "Registry changes" for a week. Files these keys point to are looked up on VirusTotal, and their hashes are matched against GTI.
+  Each finding says when its key last changed. Atlas also remembers every value it watches: when one appears or changes, the tray alerts you once and the change stays listed under "Registry changes" for a week. Each change shows the program it now runs, who signed it and what VirusTotal says, and the buttons open its folder, ask Defender, open its VirusTotal page or open the key in **Registry Editor**. A change where only the version moved (Chrome's `155.0...` folder becoming `156.0...`) to a signed program VirusTotal calls clean is a software update, so it's listed as a note instead. Files these keys point to are looked up on VirusTotal, and their hashes are matched against GTI.
 - **Programs in user folders.** Programs running from AppData, Temp, Downloads or ProgramData that aren't validly signed. These are louder when they run from Temp or Downloads or are less than a week old. Atlas also finds programs hidden in another file's invisible "alternate data stream".
 
 Programs these checks turn up are looked up on VirusTotal. With a VirusTotal Enterprise / Google Threat Intelligence key, every loaded driver is looked up too.
@@ -340,7 +348,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Where things live
 
-- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running, Protection and threat hunt checks run, new-program alerts, update checks, Google Threat Intelligence, remote-access programs you use, the weekly report, full-scan lookups)
+- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running, Protection and threat hunt checks run, new-program alerts, update checks, Google Threat Intelligence, remote-access programs you use, sites you trust and the shared allow-list, the weekly report, full-scan lookups)
 - History, cache, quarantine, backups, log: `%LOCALAPPDATA%\ProjectAtlas\`
 - API key: Windows Credential Manager, entry `ProjectAtlas`
 
@@ -348,7 +356,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Privacy
 
-`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal), and the weekly report never leaves the PC.
+`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal), and the weekly report never leaves the PC. The shared allow-list is downloaded whole from GitHub, so it sends nothing about you, and *Report a mistake* sends nothing itself: it opens a report you read and send.
 
 ## Development
 

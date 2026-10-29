@@ -76,3 +76,6 @@ button.quiet { color: var(--muted); margin-left: auto; }
 .popup .row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; gap: 12px; }
 .popup .status { color: var(--muted); font-size: 13px; }
 .popup .verdict { font-weight: 600; }
+#trust { margin-left: 0; }
+.footer { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
+.footer a { color: var(--accent); }

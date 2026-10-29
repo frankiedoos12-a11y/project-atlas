@@ -13,8 +13,9 @@ import sys
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from atlas import allowlist
 from atlas.scanner import Scanner, Verdict
-from atlas.sites import registered_domain
+from atlas.sites import registered_domain, site_warnings
 from atlas.vt_client import Report, VTError
 
 SHORTENERS = {"bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly",
@@ -25,6 +26,31 @@ BRANDS = {"paypal", "microsoft", "office365", "outlook", "apple", "icloud", "goo
           "facebook", "instagram", "whatsapp", "steam", "steamcommunity", "battle", "blizzard", "chase",
           "wellsfargo", "bankofamerica", "coinbase", "binance", "dhl", "fedex", "ups", "usps", "irs",
           "onedrive", "dropbox", "docusign", "adobe", "linkedin", "discord", "roblox", "sans", "giac"}
+# The other domains each brand really uses, so its own sites aren't taken for look-alikes (outlook.live.com is
+# Microsoft's). The shared allow-list (allowlist.json) covers the rest without a new release.
+_MICROSOFT = {"microsoft.com", "live.com", "outlook.com", "office.com", "office365.com", "microsoftonline.com",
+              "msn.com", "windows.net", "azure.com", "sharepoint.com", "onedrive.com", "skype.com", "xbox.com",
+              "bing.com", "microsoft365.com", "cloud.microsoft"}
+BRAND_DOMAINS = {
+    "microsoft": _MICROSOFT, "outlook": _MICROSOFT, "office365": _MICROSOFT, "onedrive": _MICROSOFT,
+    "apple": {"apple.com", "icloud.com"}, "icloud": {"apple.com", "icloud.com"},
+    "google": {"google.com", "googleusercontent.com", "googleapis.com", "gstatic.com", "youtube.com", "gmail.com",
+               "google.co.uk", "withgoogle.com", "googlesource.com", "appspot.com"},
+    "amazon": {"amazon.com", "amazonaws.com", "amazon.co.uk", "amazon.ca", "amazon.de", "aws.com", "a2z.com"},
+    "facebook": {"facebook.com", "fb.com", "meta.com", "fbcdn.net"},
+    "instagram": {"instagram.com", "facebook.com", "meta.com"}, "whatsapp": {"whatsapp.com", "whatsapp.net", "meta.com"},
+    "steam": {"steampowered.com", "steamcommunity.com", "steamstatic.com"},
+    "steamcommunity": {"steampowered.com", "steamcommunity.com", "steamstatic.com"},
+    "battle": {"battle.net", "blizzard.com"}, "blizzard": {"battle.net", "blizzard.com"},
+    "paypal": {"paypal.com", "paypalobjects.com"}, "netflix": {"netflix.com", "nflxext.com", "nflxvideo.net"},
+    "chase": {"chase.com", "jpmorganchase.com"}, "wellsfargo": {"wellsfargo.com", "wf.com"},
+    "bankofamerica": {"bankofamerica.com", "bofa.com"}, "dhl": {"dhl.com", "dhl.de"},
+    "ups": {"ups.com"}, "usps": {"usps.com", "usps.gov"}, "fedex": {"fedex.com"}, "irs": {"irs.gov"},
+    "dropbox": {"dropbox.com", "dropboxusercontent.com"}, "docusign": {"docusign.com", "docusign.net"},
+    "adobe": {"adobe.com", "adobelogin.com", "adobe.io"}, "linkedin": {"linkedin.com", "licdn.com"},
+    "discord": {"discord.com", "discord.gg", "discordapp.com"}, "roblox": {"roblox.com", "rbxcdn.com"},
+    "sans": {"sans.org"}, "giac": {"giac.org", "sans.org"},
+}
 
 
 @dataclass
@@ -73,7 +99,7 @@ def local_warnings(url: str) -> list[tuple[Verdict, str]]:
     registered = registered_domain(host)
     owner = registered.split(".")[0]
     for label in host.split(".")[:-2]:
-        if label in BRANDS and label != owner:
+        if label in BRANDS and label != owner and registered not in BRAND_DOMAINS.get(label, ()):
             found.append((Verdict.SUSPICIOUS, f"Mentions {label} but the site actually belongs to {registered}"))
             break
     if host in SHORTENERS:
@@ -126,12 +152,24 @@ def _judge_link(check: LinkCheck, report: Report, threshold: int) -> None:
                              "which is usually noise")
 
 
+def trusted_why(scanner: Scanner | None, host: str) -> str | None:
+    """Why this site is trusted (your list or the shared allow-list), or None."""
+    settings = getattr(scanner, "settings", None)
+    if settings is None or not host:
+        return None
+    shared = allowlist.shared_sites(scanner.store) if getattr(settings, "shared_allowlist", False) else {}
+    return allowlist.why_trusted(host, getattr(settings, "trusted_sites", []), shared)
+
+
 def check_link(scanner: Scanner | None, text: str) -> LinkCheck:
     check = LinkCheck(normalize(text))
+    trusted = trusted_why(scanner, check.host)
+    if trusted:  # Atlas's own guesses are skipped; VirusTotal and security vendors are still asked
+        check.reasons.append(f"{trusted}, so Atlas's own guesses about it are skipped")
     for verdict, reason in local_warnings(check.url):
         if verdict is Verdict.CLEAN:
             check.reasons.append(reason)
-        else:
+        elif not trusted or verdict is Verdict.ERROR:
             check.raise_to(verdict, reason)
     if check.verdict is Verdict.ERROR:
         return check
@@ -143,7 +181,14 @@ def check_link(scanner: Scanner | None, text: str) -> LinkCheck:
         _judge_link(check, check.url_report, scanner.settings.malicious_threshold)
         check.domain_report = scanner.lookup("domain", check.host)
         scanner.judge_report(check, check.domain_report, f"The site {check.host}", site=True)
-        scanner.judge_site_record(check, check.host, check.domain_report)
+        if trusted:
+            for warn, reason in site_warnings(scanner.lookup, check.host, check.domain_report):
+                if warn and reason.startswith("Security vendors list"):
+                    check.raise_to(Verdict.SUSPICIOUS, reason)
+                else:
+                    check.reasons.append(reason)
+        else:
+            scanner.judge_site_record(check, check.host, check.domain_report)
     except VTError as exc:
         check.raise_to(Verdict.ERROR, str(exc))
         return check

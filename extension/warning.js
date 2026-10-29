@@ -4,6 +4,7 @@ const url = params.get("u") || "";
 const verdict = params.get("v") || "error";
 const mode = params.get("m") || "block";
 const link = params.get("l");
+const report = params.get("p");
 let reasons = [];
 try {
   reasons = JSON.parse(params.get("r") || "[]");
@@ -36,6 +37,19 @@ if (link) {
   vt.hidden = false;
 }
 
+if (report && report.startsWith("https://github.com/")) {
+  document.getElementById("report").href = report;
+  document.getElementById("report-line").hidden = false;
+}
+
+function hostOf(address) {
+  try {
+    return new URL(address).hostname;
+  } catch (e) {
+    return "";
+  }
+}
+
 const back = document.getElementById("back");
 if (mode === "block") {
   document.title = `Blocked: ${verdict}`;
@@ -51,6 +65,21 @@ if (mode === "block") {
     }
     if (!confirm(`Open ${host} anyway? Project Atlas won't warn about it again until you restart the browser.`)) return;
     await chrome.runtime.sendMessage({ type: "allow", host });
+    location.href = url;
+  });
+  const trust = document.getElementById("trust");
+  trust.hidden = !hostOf(url);
+  trust.addEventListener("click", async () => {
+    const host = hostOf(url);
+    if (!confirm(`Always trust ${host} and the rest of its site?\n\nProject Atlas stops using its own guesses ` +
+                 "about it (look-alike names, brand-new domains), but still warns if VirusTotal's engines " +
+                 "flag it. You can remove it in Atlas: Online safety > Browsers.")) return;
+    const answer = await chrome.runtime.sendMessage({ type: "trust", host });
+    if (!answer || !answer.ok) {
+      alert(`Project Atlas couldn't save that: ${(answer && (answer.error || answer.reasons)) || "no answer"}`);
+      return;
+    }
+    await chrome.runtime.sendMessage({ type: "allow", host: new URL(url).host });
     location.href = url;
   });
 } else {

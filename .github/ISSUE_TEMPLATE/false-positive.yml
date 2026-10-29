@@ -1,0 +1,43 @@
+name: Wrong warning
+description: Project Atlas warned about a site, file or finding that's fine.
+title: "Wrong warning: "
+labels: ["false positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. Atlas's "Report a mistake" button fills most of this in. Please don't paste
+        full web addresses (they can hold sign-in tokens), passwords or anything personal.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What was it?
+      options: ["Site", "File", "Finding"]
+    validations:
+      required: true
+  - type: input
+    id: what
+    attributes:
+      label: The site, file or finding
+      description: A site's name (example.com), a file's name and SHA-256, or the finding's title.
+    validations:
+      required: true
+  - type: input
+    id: verdict
+    attributes:
+      label: What Atlas said
+  - type: textarea
+    id: reasons
+    attributes:
+      label: Atlas's reasons
+  - type: textarea
+    id: why
+    attributes:
+      label: Why do you think it's wrong?
+      description: e.g. "It's Microsoft's Outlook sign-in page" or "I installed this program myself from the maker's site".
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Project Atlas version
