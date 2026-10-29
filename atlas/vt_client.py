@@ -16,6 +16,8 @@ import requests
 
 API_BASE = "https://www.virustotal.com/api/v3"
 GUI_BASE = "https://www.virustotal.com/gui"
+# VirusTotal's AI write-ups on files ("crowdsourced_ai_results"), by category.
+AI_SOURCES = {"code_insight": "Code Insight", "references_summary": "What reports say"}
 
 
 class VTError(Exception):
@@ -47,6 +49,7 @@ class Report:
     sandbox: list[str] = field(default_factory=list)  # file: sandboxes that called it bad, and why
     rules: list[str] = field(default_factory=list)  # file: detection rules it matched
     owner: str | None = None  # IP address: the network that owns it, and its country
+    ai: list[str] = field(default_factory=list)  # file: VirusTotal's own AI write-ups ("Code Insight: ...")
 
     @property
     def total(self) -> int:
@@ -87,6 +90,8 @@ class Report:
         rules += [s["rule_title"] for s in attrs.get("sigma_analysis_results") or []
                   if s.get("rule_level") in ("critical", "high") and s.get("rule_title")]
         owner = ", ".join(str(x) for x in (attrs.get("as_owner"), attrs.get("country")) if x) or None
+        ai = [f"{AI_SOURCES.get(a.get('category') or a.get('source'), 'AI analysis')}: {' '.join(a['analysis'].split())}"
+              for a in attrs.get("crowdsourced_ai_results") or [] if (a.get("analysis") or "").strip()]
         return cls(
             kind=kind,
             target=target,
@@ -106,6 +111,7 @@ class Report:
             sandbox=sandbox,
             rules=_unique(rules)[:8],
             owner=owner,
+            ai=ai[:3],
         )
 
 

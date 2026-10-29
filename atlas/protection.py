@@ -1,10 +1,12 @@
-"""System checks in one place: Defender (atlas.defender) and hijacks (atlas.hijack), plus the
-Fix buttons.
+"""System checks in one place: Defender (atlas.defender), hijacks (atlas.hijack), software and
+Windows updates (atlas.softwareupdates) and disk health (atlas.health), plus the Fix buttons.
 
-Atlas only changes two things itself, after you confirm and with a backup first: your own
-proxy setting, and browser policies set in your own account. Everything else either opens the
-right page in Windows Security, Settings or the browser, or (for the hosts file) opens it in
-Notepad as administrator so you can edit it yourself.
+Atlas only changes things after you press a button and confirm:
+- your own proxy setting and browser policies set in your own account (with a backup first)
+- Defender's extra attack protection, through Windows' own administrator prompt (and back off again)
+- a program update, run by winget in a window you can watch
+Everything else either opens the right page in Windows Security, Settings or the browser, or (for
+the hosts file) opens it in Notepad as administrator so you can edit it yourself.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from pathlib import Path
 
 from atlas import config
 from atlas.browsers import SETTINGS_PAGES
+from atlas import defender, health, softwareupdates
 from atlas.defender import check_defender
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.hijack import HOSTS, INTERNET_SETTINGS, check_hijacks
@@ -35,6 +38,13 @@ def check_system(scanner=None) -> list[Finding]:
     lookup = scanner.lookup if scanner is not None and scanner.vt is not None else None
     threshold = scanner.settings.malicious_threshold if scanner is not None else 3
     found = check_defender() + check_hijacks(lookup, threshold)
+    for part in (lambda: softwareupdates.check_updates(scanner.store if scanner is not None else None),
+                 health.check_disks):
+        try:
+            found += part()
+        except Exception as exc:  # one broken check mustn't hide the others
+            log.exception("System check failed")
+            found.append(Finding("Atlas", "A check failed", NOTE, [str(exc)], key="system:failed"))
     return sorted(found, key=lambda f: ORDER.get(f.level, 3))
 
 
@@ -55,6 +65,13 @@ def describe_fix(f: Finding) -> str:
                          "the setting yourself again? A backup is saved first. Restart the browser afterwards.",
         "edit-hosts": "Open the hosts file in Notepad as administrator? Windows will ask for permission. Delete the "
                       "lines Atlas pointed out, then save.",
+        "winget-upgrade": f"Update {f.data.get('name')}? winget opens in a window so you can watch. Close the program "
+                          "first. If winget asks you to accept its source agreement, that's your call.",
+        "defender-harden": "Turn on Defender's extra attack protection? Windows asks for administrator permission, then "
+                           f"switches on {len(defender.ASR_RULES)} attack surface reduction rules and network protection. "
+                           "If one ever gets in the way, Atlas can turn them off again. Press Check now afterwards.",
+        "defender-undo": "Turn Defender's extra attack protection off again? Windows asks for administrator "
+                         "permission. Press Check now afterwards.",
     }.get(f.fix or "", "")
 
 
@@ -74,12 +91,25 @@ def apply_fix(f: Finding) -> str:
         return _proxy_off(f)
     if f.fix == "remove-policy":
         return _remove_policy(f)
+    if f.fix == "winget-upgrade":
+        subprocess.Popen(softwareupdates.upgrade_command(f.data["id"]), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        softwareupdates.ask_again()
+        return "winget is updating it in its own window. Press Check now when it's done."
+    if f.fix in ("defender-harden", "defender-undo"):
+        script = defender.HARDEN_SCRIPT if f.fix == "defender-harden" else defender.UNDO_SCRIPT
+        _run_as_admin("powershell.exe", f'-NoProfile -Command "{script}"')
+        log.info("Asked Windows to run %s as administrator", f.fix)
+        return "Done once you said yes to Windows' prompt. Press Check now to see the result."
     if f.fix == "edit-hosts":
-        result = ctypes.windll.shell32.ShellExecuteW(None, "runas", "notepad.exe", str(HOSTS), None, 1)
-        if result <= 32:
-            raise OSError("Notepad wasn't started (permission was refused?)")
+        _run_as_admin("notepad.exe", str(HOSTS), show=1)
         return ""
     raise ValueError(f"Nothing to fix for {f.title}")
+
+
+def _run_as_admin(program: str, args: str, show: int = 0) -> None:
+    result = ctypes.windll.shell32.ShellExecuteW(None, "runas", program, args, None, show)
+    if result <= 32:
+        raise OSError(f"{program} wasn't started (permission was refused?)")
 
 
 def _proxy_off(f: Finding) -> str:

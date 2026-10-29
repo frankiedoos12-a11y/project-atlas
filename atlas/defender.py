@@ -35,7 +35,12 @@ _STATUS_SCRIPT = (
     " ConvertTo-Json -Compress -InputObject ([pscustomobject]@{"
     " service=$s.AMServiceEnabled; antivirus=$s.AntivirusEnabled; realtime=$s.RealTimeProtectionEnabled;"
     " behavior=$s.BehaviorMonitorEnabled; downloads=$s.IoavProtectionEnabled; tamper=$s.IsTamperProtected;"
-    " age=$s.AntivirusSignatureAge; mode=[string]$s.AMRunningMode; pua=if ($p) { [int]$p.PUAProtection } else { $null }})"
+    " age=$s.AntivirusSignatureAge; mode=[string]$s.AMRunningMode; pua=if ($p) { [int]$p.PUAProtection } else { $null };"
+    " cfa=if ($p) { [int]$p.EnableControlledFolderAccess } else { $null };"
+    " network=if ($p) { [int]$p.EnableNetworkProtection } else { $null };"
+    " cloud=if ($p) { [int]$p.MAPSReporting } else { $null };"
+    " firstsight=if ($p) { -not $p.DisableBlockAtFirstSeen } else { $null };"
+    " asr_ids=@(if ($p) { $p.AttackSurfaceReductionRules_Ids }); asr_actions=@(if ($p) { $p.AttackSurfaceReductionRules_Actions })})"
 )
 
 # 1116 detected, 5001 real-time protection off, 5007 settings changed, 5010/5012 scanning off, 5013 tamper blocked.
@@ -194,7 +199,139 @@ def policy_exclusion_findings() -> list[Finding]:
 
 
 def check_defender() -> list[Finding]:
-    return status_findings(_status()) + policy_exclusion_findings() + event_findings(_events())
+    status = _status()
+    return (status_findings(status) + protection_findings(status) + smartscreen_findings(_smartscreen_values())
+            + policy_exclusion_findings() + event_findings(_events()))
+
+
+# --- Extra protection Windows has but leaves off -------------------------------------------------
+
+# Attack surface reduction rules that suit a home PC: they stop the usual tricks of malicious email
+# attachments, Office macros, scripts and USB sticks, and rarely get in the way of normal use.
+# Microsoft's "standard protection" trio comes first. (Rules that break normal software, such as
+# "block executables unless they're common", are left out.)
+ASR_RULES = {
+    "56a863a9-875e-4185-98a7-b882c64b5ce5": "Block abuse of exploited vulnerable signed drivers",
+    "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2": "Block credential stealing from LSASS",
+    "e6db77e5-3df2-4cf1-b95a-636979351e5b": "Block persistence through WMI event subscription",
+    "be9ba2d9-53ea-4cdc-84e5-9b1eeee46550": "Block executable content from email client and webmail",
+    "d4f940ab-401b-4efc-aadc-ad5f3c50688a": "Block all Office applications from creating child processes",
+    "3b576869-a4ec-4529-8536-b80a7769e899": "Block Office applications from creating executable content",
+    "75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84": "Block Office applications from injecting code into other processes",
+    "26190899-1602-49e8-8b27-eb1d0a1ce869": "Block Office communication application from creating child processes",
+    "92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b": "Block Win32 API calls from Office macros",
+    "7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c": "Block Adobe Reader from creating child processes",
+    "d3e037e1-3eb8-44c8-a917-57927947596d": "Block JavaScript or VBScript from launching downloaded executable content",
+    "5beb7efe-fd9a-4556-801d-275e5ffc04cc": "Block execution of potentially obfuscated scripts",
+    "b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4": "Block untrusted and unsigned processes that run from USB",
+    "c1db55ab-c21a-4637-bb3f-a12568109d35": "Use advanced protection against ransomware",
+}
+ASR_ON = (1, 6)  # 1 = block, 6 = warn (the user can let it through); 2 = audit only, 0 = off
+_IDS = ",".join(f"'{i}'" for i in ASR_RULES)
+# Run as administrator, only after the user agrees. Rules already on stay as they are.
+HARDEN_SCRIPT = (f"$ids = @({_IDS}); Add-MpPreference -AttackSurfaceReductionRules_Ids $ids"
+                 " -AttackSurfaceReductionRules_Actions (@('Enabled') * $ids.Count);"
+                 " Set-MpPreference -EnableNetworkProtection Enabled")
+UNDO_SCRIPT = (f"Remove-MpPreference -AttackSurfaceReductionRules_Ids @({_IDS});"
+               " Set-MpPreference -EnableNetworkProtection Disabled")
+
+
+def protection_findings(status: dict | None) -> list[Finding]:
+    """Defender features that are off on most home PCs, and the cloud protection that should be on."""
+    if not status or (status.get("mode") or "normal").lower() != "normal":
+        return []
+    found = []
+    page = {"fix": "open", "fix_label": "Open Windows Security", "data": {"url": WINDOWS_SECURITY["protection"]}}
+    if status.get("cloud") == 0:
+        found.append(Finding("Defender", "Cloud-delivered protection is off", WARN,
+                             ["Defender checks new files with Microsoft's cloud, which catches brand-new malware "
+                              "within seconds. Turn it on under Virus & threat protection settings."],
+                             key="defender:cloud:off", **page))
+    elif status.get("firstsight") is False:
+        found.append(Finding("Defender", "Block at first sight is off", WARN,
+                             ["It holds new files until the cloud has looked at them. Malware turns it off."],
+                             key="defender:first-sight:off", **page))
+    actions = dict(zip([str(i).lower() for i in status.get("asr_ids") or []], status.get("asr_actions") or []))
+    on = [i for i in ASR_RULES if actions.get(i) in ASR_ON]
+    network = status.get("network") == 1
+    if len(on) == len(ASR_RULES) and network:
+        found.append(Finding("Defender", "Extra attack protection is on", OK,
+                             [f"All {len(ASR_RULES)} recommended attack surface reduction rules, and network "
+                              "protection."], key="defender:harden:ok",
+                             fix="defender-undo", fix_label="Turn off again (asks for administrator)..."))
+    else:
+        missing = [name for i, name in ASR_RULES.items() if i not in on]
+        found.append(Finding(
+            "Defender", f"Extra attack protection is off ({len(on)} of {len(ASR_RULES)} rules on, network "
+                        f"protection {'on' if network else 'off'})", NOTE,
+            ["Windows has these built in but leaves them off. They block what most malware does first: Office "
+             "macros and email attachments starting programs, scripts downloading programs, passwords being read "
+             "out of memory, and dangerous websites in every browser (network protection). Windows Home has no "
+             "switch for them, so Atlas can turn them on for you.",
+             "Rarely, one gets in the way of a program you use. Windows then says it blocked something, and Atlas "
+             "can turn them off again just as easily."]
+            + [f"Off: {name}" for name in missing[:6]] + ([f"...and {len(missing) - 6} more"] if len(missing) > 6 else []),
+            key=f"defender:harden:{len(on)}:{int(network)}",
+            fix="defender-harden", fix_label="Turn on (asks for administrator)..."))
+    if status.get("cfa") == 1:
+        found.append(Finding("Defender", "Ransomware protection (controlled folder access) is on", OK,
+                             key="defender:cfa:ok"))
+    return found
+
+
+def _smartscreen_values() -> dict:
+    """Windows' and Edge's SmartScreen settings and Smart App Control, straight from the registry."""
+    if sys.platform != "win32":
+        return {}
+    import winreg
+
+    def read(hive, path, name):
+        try:
+            with winreg.OpenKey(hive, path) as key:
+                return winreg.QueryValueEx(key, name)[0]
+        except OSError:
+            return None
+
+    hklm, hkcu = winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER
+    return {
+        "windows": read(hklm, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer", "SmartScreenEnabled"),
+        "windows_policy": read(hklm, r"SOFTWARE\Policies\Microsoft\Windows\System", "EnableSmartScreen"),
+        "edge": read(hkcu, r"Software\Microsoft\Edge\SmartScreenEnabled", ""),
+        "edge_policy": read(hklm, r"SOFTWARE\Policies\Microsoft\Edge", "SmartScreenEnabled"),
+        "sac": read(hklm, r"SYSTEM\CurrentControlSet\Control\CI\Policy", "VerifiedAndReputablePolicyState"),
+    }
+
+
+def smartscreen_findings(values: dict) -> list[Finding]:
+    if not values:
+        return []
+    found = []
+    apps = {"fix": "open", "fix_label": "Open App & browser control", "data": {"url": WINDOWS_SECURITY["apps"]}}
+    if values.get("windows_policy") == 0 or str(values.get("windows") or "").lower() == "off":
+        found.append(Finding("SmartScreen", "SmartScreen for apps and files is off", WARN,
+                             ["SmartScreen warns before you run a program from the internet that few people have "
+                              "run. Turn on \"Check apps and files\" under Reputation-based protection."
+                              + (" A policy switched it off." if values.get("windows_policy") == 0 else "")],
+                             key="smartscreen:windows:off", **apps))
+    if values.get("edge_policy") == 0 or values.get("edge") == 0:
+        found.append(Finding("SmartScreen", "SmartScreen is off in Microsoft Edge", WARN,
+                             ["It blocks known phishing and malware sites in Edge. Turn it on under Edge > Settings "
+                              "> Privacy, search and services > Security."], key="smartscreen:edge:off", **apps))
+    if not found:
+        found.append(Finding("SmartScreen", "SmartScreen is on", OK, key="smartscreen:ok"))
+    sac = values.get("sac")
+    if sac == 1:
+        found.append(Finding("SmartScreen", "Smart App Control is on", OK, key="sac:on"))
+    elif sac == 2:
+        found.append(Finding("SmartScreen", "Smart App Control is learning (evaluation mode)", OK,
+                             ["Windows is checking whether it would get in your way before switching it on."],
+                             key="sac:evaluation"))
+    elif sac == 0:
+        found.append(Finding("SmartScreen", "Smart App Control is off", NOTE,
+                             ["It blocks programs that are neither signed nor known to be safe. On many PCs it can "
+                              "only be switched back on by resetting Windows, so it isn't worth changing for that. "
+                              "Atlas's other checks cover much of the same ground."], key="sac:off", **apps))
+    return found
 
 
 # --- Second opinion ---------------------------------------------------------------

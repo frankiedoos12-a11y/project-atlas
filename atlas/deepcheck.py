@@ -24,6 +24,7 @@ from collections import Counter
 from ctypes import wintypes
 from pathlib import Path
 
+from atlas import health
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.local_checks import run_powershell_json
 
@@ -79,6 +80,7 @@ def collect() -> dict:
         "security": _try("security", lambda: run_powershell_json(_SECURITY_SCRIPT, timeout=120)),
         "wmi": _try("wmi", lambda: run_powershell_json(_WMI_SCRIPT, timeout=60)),
         "processes": _try("processes", processes),
+        "disks": _try("disks", lambda: run_powershell_json(health.RELIABILITY_SCRIPT, timeout=60)),
     }
 
 
@@ -248,6 +250,8 @@ def analyze(data: dict, context=None) -> tuple[list[Finding], dict]:
     if data.get("admin"):  # without it the Security log just comes back empty, which proves nothing
         found += security_findings(data.get("security"))
     found += wmi_findings(data.get("wmi"))
+    if data.get("admin") and isinstance(data.get("disks"), list):
+        found += [f for f in health.check_disks(data["disks"]) if f.level != OK]
     procs = data.get("processes") or {}
     items = [cmdlines.Proc(**p) for p in procs.get("items") or []] if isinstance(procs, dict) else []
     found += cmdlines.evaluate(items, context)

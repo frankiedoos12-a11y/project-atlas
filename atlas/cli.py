@@ -375,7 +375,8 @@ def cmd_network(args) -> int:
 
 
 def cmd_protection(args) -> int:
-    """Defender settings and history, browser start/search pages, proxy, hosts file and DNS. Read-only."""
+    """Defender settings and history, program and Windows updates, disk health, browser start/search pages,
+    proxy, hosts file and DNS. Read-only."""
     from atlas.protection import check_system
 
     scanner, store = build_scanner(config.Settings.load())
@@ -394,6 +395,24 @@ def cmd_protection(args) -> int:
           + ("" if args.all else " Add --all to list everything."))
     store.close()
     return 2 if flagged else 0
+
+
+def cmd_password_check(args) -> int:
+    """Has a password appeared in a data leak? Only 5 characters of its hash leave the PC."""
+    import getpass
+
+    from atlas import pwned
+
+    password = getpass.getpass("Password to check (not shown, never saved): ")
+    if not password:
+        return 1
+    try:
+        count = pwned.times_leaked(password)
+    except Exception as exc:
+        print(f"Couldn't reach Have I Been Pwned: {exc}")
+        return 1
+    print(pwned.verdict(count))
+    return 2 if count else 0
 
 
 def cmd_installed(args) -> int:
@@ -688,9 +707,13 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_network)
 
     p = sub.add_parser("protection", aliases=["system"],
-                       help="check Defender, browser start/search pages, proxy, hosts file and DNS (read-only)")
+                       help="check Defender, updates, disk health, browser start/search pages, proxy, hosts file "
+                            "and DNS (read-only)")
     p.add_argument("--all", action="store_true", help="also list what's fine")
     p.set_defaults(func=cmd_protection)
+
+    sub.add_parser("password-check", help="check whether a password has appeared in a data leak"
+                   ).set_defaults(func=cmd_password_check)
 
     p = sub.add_parser("installed", aliases=["programs"], help="check installed programs (read-only)")
     p.add_argument("--all", action="store_true", help="list every program, not only the ones to look at")

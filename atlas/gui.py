@@ -18,10 +18,10 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from atlas import (__version__, browsers, config, deepcheck, defender, gti, hunt, installed, network, processes,
-                   protection, space, updates)
+                   protection, pwned, space, updates)
 from atlas.app import build_scanner, guard_running, launch_tray, vt_usage_text
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
@@ -1526,11 +1526,13 @@ class AtlasWindow:
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.protection_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
-                                            text="Is Defender on and untouched, and has anything changed your "
+                                            text="Is Defender on and untouched, are your programs and Windows up "
+                                                 "to date, are your drives healthy, and has anything changed your "
                                                  "browser, proxy, hosts file or DNS? Click Check now.")
         self.protection_summary.pack(side="left", fill="x", expand=True)
         self.protection_button = ttk.Button(bar, text="Check now", command=self.check_protection)
         self.protection_button.pack(side="right")
+        ttk.Button(bar, text="Check a password...", command=self._check_password).pack(side="right", padx=(0, 6))
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
         self.protection_table = Table(panes, [("verdict", "Status", 120), ("area", "Area", 200),
@@ -1556,7 +1558,8 @@ class AtlasWindow:
 
     def check_protection(self) -> None:
         self.protection_button.configure(state="disabled")
-        self.protection_summary.configure(text="Checking Defender, browsers, proxy, hosts file and DNS...")
+        self.protection_summary.configure(text="Checking Defender, updates, drives, browsers, proxy, hosts file "
+                                               "and DNS...")
 
         def done(findings) -> None:
             self.protection_button.configure(state="normal")
@@ -1582,7 +1585,9 @@ class AtlasWindow:
                  ("Area", f.area, None), ("Finding", f.title, None)] + [("Why", d, None) for d in f.details]
         self.protection_detail.show(lines)
         self._protection_link = f.vt_link
-        self.protection_vt.configure(state="normal" if f.vt_link else "disabled")
+        self.protection_vt.configure(state="normal" if f.vt_link else "disabled",
+                                     text="View on CISA" if f.vt_link and "cisa.gov" in f.vt_link
+                                     else "View on VirusTotal")
         self.protection_fix.configure(text=f.fix_label or "Fix...", state="normal" if f.fix else "disabled")
 
     def _fix_finding(self) -> None:
@@ -1600,6 +1605,20 @@ class AtlasWindow:
         if message:
             messagebox.showinfo(WINDOW_TITLE, message)
             self.check_protection()
+
+    def _check_password(self) -> None:
+        password = simpledialog.askstring(
+            WINDOW_TITLE, "Type a password to see whether it has appeared in a data leak.\n\nIt never leaves this "
+                          "PC: Atlas sends only the first 5 characters of a scrambled (hashed) version to Have I Been "
+                          "Pwned, and nothing is saved.", show="*", parent=self.root)
+        if not password:
+            return
+
+        def done(count) -> None:
+            if count is not None:
+                (messagebox.showwarning if count else messagebox.showinfo)(WINDOW_TITLE, pwned.verdict(count))
+
+        self.in_background(lambda: pwned.times_leaked(password), done)
 
     def _build_hunt_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self.tabs, padding=10)

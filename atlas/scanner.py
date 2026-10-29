@@ -113,7 +113,13 @@ def threat_lines(result: ScanResult) -> list[tuple[str, str, None]]:
         rows += [("Sandbox", s, None) for s in report.sandbox[:4]]
         if report.rules:
             rows.append(("Rules", ", ".join(report.rules[:5]), None))
+    if report and (report.malicious or report.suspicious):
+        rows += [("VT AI", _clip(text, 500), None) for text in report.ai[:2]]
     return rows
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + "..."
 
 
 class Scanner:
