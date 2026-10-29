@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from atlas import config
+from atlas import config, frozen
 
 if sys.platform == "win32":
     import winreg
@@ -23,6 +23,8 @@ TARGETS = (r"Software\Classes\*\shell", r"Software\Classes\Directory\shell")
 
 def command_line() -> str:
     """What Explorer runs, with "%1" replaced by the clicked file or folder."""
+    if frozen.is_frozen():
+        return f'"{frozen.gui_exe()}" --scan "%1"'
     scripts = Path(sys.executable).parent
     exe = scripts / "atlas-gui.exe"
     if exe.exists():
@@ -59,6 +61,15 @@ def enable() -> None:
             winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, rf"{base}\{VERB}\command") as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, command_line())
+
+
+def is_mine() -> bool:
+    """Does the right-click entry start this copy of Atlas?"""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"{TARGETS[0]}\{VERB}\command") as key:
+            return winreg.QueryValueEx(key, "")[0] == command_line()
+    except OSError:
+        return False
 
 
 def disable() -> None:

@@ -4,7 +4,18 @@ VirusTotal-powered protection for Windows 11. It runs **alongside** Windows Defe
 
 ## Install
 
-On any Windows 10 or 11 PC, open **PowerShell** (Start menu, type *PowerShell*, press Enter; no administrator rights needed) and paste:
+**[Download ProjectAtlas-Setup.exe](https://github.com/frankiedoos12-a11y/project-atlas/releases/latest/download/ProjectAtlas-Setup.exe)** and open it. It needs no administrator rights and no Python, works on Windows 10 and 11 (64-bit), and puts **Project Atlas** on your desktop and in the Start menu.
+
+1. Windows may say **"Windows protected your PC"**, because Atlas is new and isn't code-signed yet. Click **More info**, then **Run anyway**.
+2. Pick the options you want (all are on by default) and click **Install**.
+3. Atlas opens. Click **Add VirusTotal key...** at the top right and follow the steps: the key is free, and each PC keeps its own in Windows Credential Manager.
+
+- **Update:** when there's a new version, Atlas offers **Update now** (in the window and the tray menu). Or download and run the newest setup again. Settings, history and your key are kept.
+- **Uninstall:** Settings > Apps > Installed apps > **Project Atlas** > Uninstall. Your settings, history, quarantine and key are kept in case you reinstall.
+
+### Or install with PowerShell
+
+This way installs Python and adds the `atlas` command to every terminal. On any Windows 10 or 11 PC, open **PowerShell** (Start menu, type *PowerShell*, press Enter; no administrator rights needed) and paste:
 
 ```powershell
 irm https://raw.githubusercontent.com/frankiedoos12-a11y/project-atlas/main/install.ps1 | iex
@@ -28,6 +39,8 @@ After installing you don't need to start anything: **Atlas is already running**,
 | **`atlas` commands** | Type them in any **PowerShell** or **Command Prompt** window | The same features as text, e.g. `atlas scan C:\Users\me\Downloads\setup.exe`. See [Commands](#commands). |
 
 `atlas` works in any folder, but only in windows opened **after** installing: if a window was already open, close it and open a new one. To check, type `atlas --version`.
+
+The setup (`ProjectAtlas-Setup.exe`) puts **Project Atlas** on the desktop too. It doesn't add `atlas` to terminals or a separate tray shortcut: the window's **Start protection** button starts the tray, and the commands are in `%LOCALAPPDATA%\Programs\Project Atlas\atlas.exe`.
 
 What Atlas does:
 
@@ -218,7 +231,7 @@ The tray runs the threat hunt with the Protection checks every hour and alerts y
 
 The window's header shows how many VirusTotal lookups Atlas has made today and this month (a free key allows 500 a day; answers Atlas already has don't count). `atlas quota` breaks it down.
 
-Once a day the tray checks GitHub for a newer version (`check_for_updates`). When there is one, it tells you, and in a copy set up by the installer the tray menu and the window's **Update now** button re-run the installer in a window you can watch. Settings, history and your key are kept. `atlas update` checks from the console, and `atlas update --now` updates.
+Once a day the tray checks GitHub for a newer version (`check_for_updates`). When there is one, it tells you, and the tray menu and the window's **Update now** button update Atlas: the app downloads the newest release's setup and runs it, and a copy set up by `install.ps1` re-runs that in a window you can watch. Settings, history and your key are kept. `atlas update` checks from the console, and `atlas update --now` updates.
 
 ## The Atlas window
 
@@ -321,6 +334,8 @@ A clone gets no Start menu entries and no `atlas` on PATH. Run its programs by p
 .\.venv\Scripts\atlas-gui.exe              # open the window
 .\.venv\Scripts\python.exe -m pytest -q    # run the tests
 ```
+
+To build `ProjectAtlas-Setup.exe` yourself, install PyInstaller in the environment (`.\.venv\Scripts\python.exe -m pip install pyinstaller`) and [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`), then run `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`. It writes `packaging\dist\ProjectAtlas-Setup.exe`. Pushing a tag such as `v0.10.0` builds it on GitHub and attaches it to a new release (`.github/workflows/release.yml`).
 
 Don't run an installed copy and a clone at the same time. Only one copy's protection runs, and the right-click menu and browser helper point at whichever copy switched them on last.
 

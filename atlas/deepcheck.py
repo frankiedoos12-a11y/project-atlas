@@ -24,7 +24,7 @@ from collections import Counter
 from ctypes import wintypes
 from pathlib import Path
 
-from atlas import health
+from atlas import frozen, health
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.local_checks import run_powershell_json
 
@@ -102,6 +102,8 @@ class _ShellExecuteInfo(ctypes.Structure):
 
 
 def _python() -> str:
+    if frozen.is_frozen():
+        return str(frozen.cli_exe())
     exe = Path(sys.executable)
     console = exe.with_name("python.exe")
     return str(console if exe.name.lower() == "pythonw.exe" and console.exists() else exe)

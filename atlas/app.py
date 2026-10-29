@@ -8,7 +8,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from atlas import config
+from atlas import config, frozen
 from atlas.db import Store
 from atlas.scanner import Scanner
 from atlas.vt_client import VTClient
@@ -92,6 +92,10 @@ def guard_running() -> bool:
 
 def _launch(gui_script: str, module_command: str) -> None:
     """Start an Atlas GUI process (tray or window) with no console window."""
+    if frozen.is_frozen():
+        subprocess.Popen([str(frozen.gui_exe()), "-m", f"atlas.{module_command}"], close_fds=True,
+                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        return
     scripts = Path(sys.executable).parent
     exe = scripts / f"{gui_script}.exe"
     if exe.exists():

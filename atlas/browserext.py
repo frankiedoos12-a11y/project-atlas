@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from atlas import config
+from atlas import config, frozen
 from atlas.nativehost import HOST_NAME
 
 if sys.platform == "win32":
@@ -44,6 +44,8 @@ def write_host_files() -> Path:
     folder = host_dir()
     folder.mkdir(parents=True, exist_ok=True)
     python = Path(sys.executable)  # console python: the browser talks to it over stdin/stdout
+    if frozen.is_frozen():
+        python = frozen.cli_exe()
     if python.name.lower() == "pythonw.exe":
         python = python.with_name("python.exe")
     launcher = folder / "atlas-link-helper.bat"
@@ -73,6 +75,15 @@ def enable() -> Path:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, rf"{base}\{HOST_NAME}") as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(manifest))
     return manifest
+
+
+def is_mine() -> bool:
+    """Is the browser helper registered to this copy of Atlas?"""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"{BROWSER_KEYS['Chrome']}\{HOST_NAME}") as key:
+            return Path(winreg.QueryValueEx(key, "")[0]) == host_dir() / f"{HOST_NAME}.json"
+    except OSError:
+        return False
 
 
 def disable() -> None:

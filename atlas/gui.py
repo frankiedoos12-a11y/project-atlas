@@ -28,6 +28,7 @@ from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_
 from atlas.links import check_link
 from atlas.quarantine import quarantine_dir, restore_file
 from atlas.scanner import Verdict, threat_lines
+from atlas.vt_client import VTClient
 
 WINDOW_TITLE = "Project Atlas"
 
@@ -252,6 +253,7 @@ class AtlasWindow:
         self.protection_label.pack(anchor="e")
         self.key_label = ttk.Label(right, style="Muted.TLabel")
         self.key_label.pack(anchor="e")
+        self.key_button = ttk.Button(right, text="Add VirusTotal key...", command=self.ask_for_key)
         self.update_row = ttk.Frame(right, style="Header.TFrame")
         self.update_label = ttk.Label(self.update_row, style="Update.TLabel")
         self.update_label.pack(side="left")
@@ -265,13 +267,13 @@ class AtlasWindow:
         if not latest or not updates.is_newer(latest):
             return
         self.update_label.configure(text=updates.update_hint(latest) + "  ")
-        if updates.install_kind() == "installer":
+        if updates.can_update_itself():
             self.update_button.pack(side="left")
         self.update_row.pack(anchor="e", pady=(4, 0))
 
     def _update_now(self) -> None:
-        if not messagebox.askyesno(WINDOW_TITLE, "Update Project Atlas now?\n\nA PowerShell window opens and runs the "
-                                                 "installer: it closes Atlas, updates it and starts the tray again. "
+        if not messagebox.askyesno(WINDOW_TITLE, "Update Project Atlas now?\n\nThe installer closes Atlas, updates it "
+                                                 "and starts the tray again. "
                                                  "Your settings, history and key are kept."):
             return
         try:
@@ -291,7 +293,44 @@ class AtlasWindow:
             self.protection_label.configure(text="●  Protection OFF", style="Off.TLabel")
             self.start_button.pack(anchor="e", pady=(4, 0))
         self.key_label.configure(text=f"VirusTotal key: connected  ·  {vt_usage_text(self.store)}" if self.scanner.vt
-                                 else "VirusTotal key: NOT SET (run atlas set-key)")
+                                 else "VirusTotal key: not set, so only Atlas's own checks run")
+        if self.scanner.vt:
+            self.key_button.pack_forget()
+        else:
+            self.key_button.pack(anchor="e", pady=(4, 0))
+
+    def ask_for_key(self) -> None:
+        """Store a VirusTotal key from the window, for people who never open a terminal."""
+        if not messagebox.askyesno(WINDOW_TITLE, "Atlas checks files and links with VirusTotal, using your own free "
+                                                 "VirusTotal key.\n\nDo you already have one?"):
+            messagebox.showinfo(WINDOW_TITLE, "VirusTotal's sign-up page opens now. After signing up, click your "
+                                              "name (top right), choose API key and copy it, then come back here.")
+            webbrowser.open("https://www.virustotal.com/gui/join-us")
+        key = simpledialog.askstring(WINDOW_TITLE, "Paste your VirusTotal API key\n(kept in Windows Credential Manager):",
+                                     parent=self.root, show="*")
+        if not key or not key.strip():
+            return
+        key = key.strip()
+
+        def check():
+            try:
+                # The EICAR test file: a harmless file every antivirus detects on purpose.
+                VTClient(key).file_report("275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f")
+            except Exception as exc:
+                return str(exc)
+            return None
+
+        def done(problem):
+            if problem:
+                messagebox.showerror(WINDOW_TITLE, f"VirusTotal didn't accept that key, so it wasn't saved.\n\n{problem}")
+                return
+            config.set_api_key(key)
+            self.scanner.vt = VTClient(key)
+            self.scanner.vt.on_request = self.store.count_vt_request
+            self._update_header()
+            messagebox.showinfo(WINDOW_TITLE, "VirusTotal key saved. Atlas now checks files and links with it.")
+
+        self.in_background(check, done)
 
     def _start_protection(self) -> None:
         launch_tray()

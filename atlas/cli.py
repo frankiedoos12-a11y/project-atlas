@@ -554,7 +554,7 @@ def cmd_update(args) -> int:
     if args.now:
         updates.start_update()
         print("Updating in a new window.")
-    elif updates.install_kind() == "installer":
+    elif updates.can_update_itself():
         print("Run `atlas update --now` to update.")
     return 0
 
@@ -613,7 +613,17 @@ def cmd_config(args) -> int:
     return 0
 
 
+def _someone_elses(args, module) -> bool:
+    """`off --only-mine` (the app's uninstaller): leave a setting that belongs to another copy of Atlas alone."""
+    if args.state == "off" and args.only_mine and not module.is_mine():
+        print("This belongs to another copy of Project Atlas, so it was left alone.")
+        return True
+    return False
+
+
 def cmd_autostart(args) -> int:
+    if _someone_elses(args, autostart):
+        return 0
     if args.state == "off":
         autostart.disable()
         print("Project Atlas will no longer start at sign-in.")
@@ -625,6 +635,8 @@ def cmd_autostart(args) -> int:
 def cmd_browser_extension(args) -> int:
     from atlas import browserext
 
+    if _someone_elses(args, browserext):
+        return 0
     if args.state == "off":
         browserext.disable()
         print("The browser extension is disconnected from Atlas. Remove it from each browser's extensions page.")
@@ -643,6 +655,8 @@ def cmd_browser_extension(args) -> int:
 def cmd_context_menu(args) -> int:
     from atlas import contextmenu
 
+    if _someone_elses(args, contextmenu):
+        return 0
     if args.state == "off":
         contextmenu.disable()
         print('"Scan with Project Atlas" removed from the right-click menu.')
@@ -762,16 +776,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("autostart", aliases=["startup"], help="start Atlas in the tray at sign-in")
     p.add_argument("state", choices=["on", "off"])
+    p.add_argument("--only-mine", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_autostart)
 
     p = sub.add_parser("browser-extension", aliases=["extension"],
                        help="connect the Project Atlas browser extension to this PC")
     p.add_argument("state", choices=["on", "off"])
+    p.add_argument("--only-mine", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_browser_extension)
 
     p = sub.add_parser("context-menu", aliases=["menu"],
                        help='add "Scan with Project Atlas" to the right-click menu')
     p.add_argument("state", choices=["on", "off"])
+    p.add_argument("--only-mine", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_context_menu)
 
     args = parser.parse_args(argv)

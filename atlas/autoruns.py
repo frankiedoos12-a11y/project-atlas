@@ -443,10 +443,10 @@ def is_microsoft(sig: Signature | None) -> bool:
 
 
 def is_atlas_itself(path: Path) -> bool:
-    """Atlas's own launchers (atlas-tray.exe etc.), which pip creates unsigned."""
+    """Atlas's own launchers (atlas-tray.exe etc., or the app's ProjectAtlas.exe), which are unsigned."""
     try:
         return (path.resolve().parent == Path(sys.executable).resolve().parent
-                and path.name.lower().startswith("atlas"))
+                and path.name.lower().startswith(("atlas", "projectatlas")))
     except OSError:
         return False
 

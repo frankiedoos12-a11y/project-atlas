@@ -283,7 +283,7 @@ class AtlasTray:
                 self.update_available = latest
                 log.info("Update available: %s", latest)
                 toast("Atlas: update available", updates.update_hint(latest) +
-                      (" Right-click the globe to update." if updates.install_kind() == "installer" else ""))
+                      (" Right-click the globe to update." if updates.can_update_itself() else ""))
                 self._refresh()
 
     def _update(self, icon, item) -> None:

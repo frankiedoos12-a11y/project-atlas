@@ -3,6 +3,8 @@
 Atlas reads the version number from the repository's atlas/__init__.py (a few bytes, no
 account or token). Copies set up by install.ps1 update by re-running the installer in a
 visible PowerShell window, so you can watch it; a git clone is left to `git pull`.
+The app (ProjectAtlas-Setup.exe) asks GitHub for the newest release instead, and updates by
+downloading that release's setup and running it.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from pathlib import Path
 
 import requests
 
-from atlas import __version__
+from atlas import __version__, frozen
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +26,8 @@ REPO = os.environ.get("ATLAS_REPO", "frankiedoos12-a11y/project-atlas")
 BRANCH = os.environ.get("ATLAS_BRANCH", "main")
 VERSION_URL = "https://raw.githubusercontent.com/{repo}/{branch}/atlas/__init__.py"
 INSTALL_URL = "https://raw.githubusercontent.com/{repo}/{branch}/install.ps1"
+RELEASE_URL = "https://api.github.com/repos/{repo}/releases/latest"
+SETUP_URL = "https://github.com/{repo}/releases/latest/download/ProjectAtlas-Setup.exe"
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -36,10 +40,14 @@ def is_newer(latest: str, current: str = __version__) -> bool:
 
 def latest_version(session: requests.Session | None = None) -> str | None:
     """The version on GitHub, or None if it couldn't be read (offline, GitHub down...)."""
+    app = install_kind() == "app"
+    url = (RELEASE_URL if app else VERSION_URL).format(repo=REPO, branch=BRANCH)
     try:
-        resp = (session or requests).get(VERSION_URL.format(repo=REPO, branch=BRANCH), timeout=15)
+        resp = (session or requests).get(url, timeout=15)
         resp.raise_for_status()
-    except requests.RequestException as exc:
+        if app:
+            return resp.json()["tag_name"].lstrip("v") or None
+    except (requests.RequestException, ValueError, KeyError) as exc:
         log.info("Couldn't check for updates: %s", exc)
         return None
     m = re.search(r'__version__\s*=\s*"([^"]+)"', resp.text)
@@ -52,7 +60,9 @@ def program_folder() -> Path:
 
 
 def install_kind(folder: Path | None = None) -> str:
-    """ "installer" (set up by install.ps1), "git" (a clone), or "other"."""
+    """ "app" (ProjectAtlas-Setup.exe), "installer" (set up by install.ps1), "git" (a clone), or "other"."""
+    if folder is None and frozen.is_frozen():
+        return "app"
     folder = folder or program_folder()
     if (folder / ".git").exists():
         return "git"
@@ -64,6 +74,8 @@ def install_kind(folder: Path | None = None) -> str:
 def start_update(folder: Path | None = None) -> None:
     """Re-run the installer for this copy in a new PowerShell window. It stops Atlas, updates it and starts the
     tray again; settings, history and the key are kept."""
+    if folder is None and install_kind() == "app":
+        return _run_new_setup()
     folder = folder or program_folder()
     if install_kind(folder) != "installer":
         raise RuntimeError("This copy wasn't set up by the installer. Update it with git pull instead.")
@@ -77,9 +89,27 @@ def start_update(folder: Path | None = None) -> None:
                      creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
 
 
+def _run_new_setup() -> None:
+    """Download the newest release's setup and run it. It closes Atlas, updates it and starts the tray again."""
+    import tempfile
+
+    url = SETUP_URL.format(repo=REPO)
+    log.info("Downloading %s", url)
+    resp = requests.get(url, timeout=120)
+    resp.raise_for_status()
+    setup = Path(tempfile.mkdtemp(prefix="atlas-update-")) / "ProjectAtlas-Setup.exe"
+    setup.write_bytes(resp.content)
+    subprocess.Popen([str(setup), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], close_fds=True,
+                     creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+
+
+def can_update_itself() -> bool:
+    return install_kind() in ("app", "installer")
+
+
 def update_hint(latest: str) -> str:
     kind = install_kind()
-    if kind == "installer":
+    if kind in ("app", "installer"):
         return f"Project Atlas {latest} is available (you have {__version__})."
     if kind == "git":
         return f"Project Atlas {latest} is on GitHub (you have {__version__}). Update this copy with git pull."

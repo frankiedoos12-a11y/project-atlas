@@ -1,0 +1,36 @@
+# Pushing a tag like v0.10.0 builds ProjectAtlas-Setup.exe and publishes it as a GitHub release.
+# The README's download link always points at the newest release's setup.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Atlas, PyInstaller and Inno Setup
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]" pyinstaller
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Test
+        run: python -m pytest -q
+      - name: Build the setup
+        run: ./packaging/build.ps1
+      - name: Check the version matches the tag
+        run: |
+          $version = python -c "import atlas; print(atlas.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "atlas/__init__.py says $version but the tag is ${{ github.ref_name }}." }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" packaging/dist/ProjectAtlas-Setup.exe --title "Project Atlas ${{ github.ref_name }}" --generate-notes
