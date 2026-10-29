@@ -99,7 +99,7 @@ class SystemMonitor:
     (command lines, certificates, drivers, open ports, user folders, GTI matches) every so often.
 
     Alerts when a problem appears that wasn't there before. The very first run only records what's
-    already there (it's listed in the Protection tab and the tray menu, without a pop-up for each).
+    already there (it's listed on the Protection page and the tray menu, without a pop-up for each).
     """
 
     def __init__(self, scanner, store, minutes: int, on_finding: Callable[[str, str, str | None], None]):

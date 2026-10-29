@@ -176,9 +176,9 @@ Each problem has a button. Most open the right page in Windows Security, Setting
 
 The tray re-runs these checks every hour (`system_check_minutes`) and pops up an alert when a new problem appears. The first run just notes what's already there; the tray menu shows how many things need a look. `atlas protection` prints the same list.
 
-**Health score.** The Protection checks and the threat hunt add up to one number from 0 to 100, shown on the Protection tab and in the tray menu: 90 and up is *Good*, 60 and up *Fair*, below that *Needs attention*. Things that need a look cost the most (more for Defender, remote access and threat-hunt findings), several in the same area cost less each, and notes cost a little.
+**Health score.** The Protection checks and the threat hunt add up to one number from 0 to 100, shown on the window's Home page and in the tray menu: 90 and up is *Good*, 60 and up *Fair*, below that *Needs attention*. Things that need a look cost the most (more for Defender, remote access and threat-hunt findings), several in the same area cost less each, and notes cost a little.
 
-**Weekly report.** Once a week the tray writes a short report and pops up a summary: the health score and how it moved, what's new, what got fixed, and what Atlas did (files checked, flagged and quarantined, VirusTotal lookups, space cleaned). It's a page in `%LOCALAPPDATA%\ProjectAtlas\reports` that stays on the PC. **Weekly report** on the Protection tab, or `atlas report`, writes one now. Turn it off with `weekly_report`.
+**Weekly report.** Once a week the tray writes a short report and pops up a summary: the health score and how it moved, what's new, what got fixed, and what Atlas did (files checked, flagged and quarantined, VirusTotal lookups, space cleaned). It's a page in `%LOCALAPPDATA%\ProjectAtlas\reports` that stays on the PC. **Weekly report** on Home (or **Write one now** under History > Weekly reports), or `atlas report`, writes one now. Turn it off with `weekly_report`.
 
 **Check a password...** tells you whether a password has appeared in a data leak, using Have I Been Pwned. The password never leaves the PC: Atlas sends only the first 5 characters of its SHA-1 hash, and nothing is saved. `atlas password-check` does the same.
 
@@ -192,7 +192,7 @@ The **Full scan** tab checks every program file on your drives (programs, DLLs, 
 
 ### Scam check
 
-Got an email, text or pop-up you're not sure about? Paste it into the **Scam check** tab (or `atlas scam-check`). Atlas looks for the usual scam tricks and explains each one it finds, quoting the words: asking for remote access, gift cards, crypto or wire payments, codes or passwords, "call this number", fake invoices and renewals, threats from the "police" or "IRS", virus scares, blackmail, prizes, unpaid tolls and parcels, secrecy and pressure. Every link in the message is checked like the link checker does. It answers *Looks like a scam*, *Be careful* or *Nothing obvious found*. Rules only, no AI service: the message stays on the PC, and only its links go to VirusTotal.
+Got an email, text or pop-up you're not sure about? Paste it into **Online safety > Message and link check** (or `atlas scam-check`). Atlas looks for the usual scam tricks and explains each one it finds, quoting the words: asking for remote access, gift cards, crypto or wire payments, codes or passwords, "call this number", fake invoices and renewals, threats from the "police" or "IRS", virus scares, blackmail, prizes, unpaid tolls and parcels, secrecy and pressure. Every link in the message is checked like the link checker does. It answers *Looks like a scam*, *Be careful* or *Nothing obvious found*. Rules only, no AI service: the message stays on the PC, and only its links go to VirusTotal.
 
 ## 8. Installed programs
 
@@ -253,20 +253,33 @@ Once a day the tray checks GitHub for a newer version (`check_for_updates`). Whe
 
 ## The Atlas window
 
-Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has twelve tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. A sidebar on the left keeps it tidy: **Home**, then five groups, each with a few tabs.
 
+**Home** shows the health score (from the Protection checks and the threat hunt, run when the window opens; **Check again** re-runs them), quick actions (*Scan a file...*, *Check a message or link*, *Full scan*, *Clean up junk*, *Check a password...*, *Weekly report*) and the top things that need a look, each with its fix button and **Details**, which jumps to it on the Protection page. The sidebar shows how many things need a look next to *Protection*.
+
+**Protection**
+- **Checks**: Defender and its extra protection, SmartScreen, software and Windows updates, remote-access programs, disk health, browser start pages and search, proxy, hosts file and DNS, each with a fix button (see above).
+- **Full scan**: every program file on the PC, a day's worth of lookups at a time, plus Defender's full and offline scans (see above).
+- **Threat hunt**: command lines, root certificates, drivers, open ports, registry hiding places and settings, user-folder programs, threat-intel matches and the administrator deep check (see above).
+
+**My PC**
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
 - **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
 - **Installed**: installed programs, with adware and unwanted software called out, and **Uninstall...** (see above).
-- **Protection**: the health score, Defender and its extra protection, SmartScreen, software and Windows updates, remote-access programs, disk health, browser start pages and search, proxy, hosts file and DNS, each with a fix button, plus the password check and the weekly report (see above).
-- **Threat hunt**: command lines, root certificates, drivers, open ports, registry hiding places and settings, user-folder programs, threat-intel matches and the administrator deep check (see above).
-- **Full scan**: every program file on the PC, a day's worth of lookups at a time, plus Defender's full and offline scans (see above).
-- **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
+
+**Online safety**
+- **Message and link check**: paste a message to see whether it looks like a scam (see above).
+- **Browsers**: link checker, notification spam and extensions (see above).
+- **Passwords**: whether a password has appeared in a data leak (see above).
+
+**Clean up**
 - **Cleanup**: finds junk, leftovers with no home, and privacy traces (see above). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
-- **Browsers**: link checker, notification spam and extensions (see above).
-- **Scam check**: paste a message to see whether it looks like a scam (see above).
+
+**History**
+- **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
 - **Quarantine**: files Atlas moved out of the way, with **Restore** (asks first).
+- **Weekly reports**: the reports the tray wrote, with **Open** and **Write one now**.
 
 The header shows whether protection is running, whether your VirusTotal key is connected, today's VirusTotal lookups, and when an update is available.
 

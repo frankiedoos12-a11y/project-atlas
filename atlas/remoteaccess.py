@@ -184,4 +184,4 @@ def started_alert(name: str) -> tuple[str, str]:
     """The tray pop-up when a remote-access tool starts."""
     return (f"Atlas: {name} just started",
             f"Someone may be able to see and control this PC. If a caller or pop-up asked you to run it, it's a "
-            f"scam: hang up and end it (Protection tab).")
+            f"scam: hang up and end it (Protection page).")

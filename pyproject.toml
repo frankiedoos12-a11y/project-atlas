@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-atlas"
-version = "0.10.0"
+version = "0.11.0"
 description = "Project Atlas: VirusTotal-powered protection and cleanup for Windows, alongside Windows Defender."
 readme = "README.md"
 license = "GPL-3.0-or-later"

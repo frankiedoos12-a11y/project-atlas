@@ -90,7 +90,7 @@ td {{ padding: 6px 0; border-bottom: 1px solid #eee; }} td:last-child {{ text-al
 <h2>Fixed this week</h2>{_list(w.fixed, "Nothing was fixed this week.")}
 <h2>What Atlas did</h2>
 <table>{"".join(f"<tr><td>{html.escape(k)}</td><td>{html.escape(str(v))}</td></tr>" for k, v in rows)}</table>
-<p class=muted style="margin-top:24px">Open the Atlas window's Protection tab for details and fixes. This report
+<p class=muted style="margin-top:24px">Open the Atlas window's Protection page for details and fixes. This report
 stays on this PC. Project Atlas {__version__}.</p>
 </main></body></html>
 """

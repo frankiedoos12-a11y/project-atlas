@@ -114,6 +114,22 @@ def launch_gui() -> None:
     _launch("atlas-gui", "gui")
 
 
+def scan_command(paths: list[str]) -> list[str]:
+    """The scan window for these files: the same command as Explorer's "Scan with Project Atlas"."""
+    if frozen.is_frozen():
+        return [str(frozen.gui_exe()), "--scan", *paths]
+    scripts = Path(sys.executable).parent
+    exe = scripts / "atlas-gui.exe"
+    if exe.exists():
+        return [str(exe), "--scan", *paths]
+    pythonw = scripts / "pythonw.exe"
+    return [str(pythonw if pythonw.exists() else sys.executable), "-m", "atlas.gui", "--scan", *paths]
+
+
+def launch_scan(paths: list[str]) -> None:
+    subprocess.Popen(scan_command(paths), close_fds=True, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+
+
 def claim_single_instance() -> bool:
     """True if no other Atlas guard (console or tray) is running. Held until this process exits."""
     global _instance_mutex

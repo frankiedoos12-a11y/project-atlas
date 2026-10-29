@@ -393,7 +393,7 @@ def cmd_protection(args) -> int:
         for line in f.details:
             print(f"           - {line}")
         if f.fix_label:
-            print(f"           Fix in the Protection tab: {f.fix_label}")
+            print(f"           Fix on the Protection page: {f.fix_label}")
     flagged = [f for f in findings if f.needs_look]
     print(f"\n{len(findings)} checks: {len(flagged)} need a look."
           + ("" if args.all else " Add --all to list everything."))

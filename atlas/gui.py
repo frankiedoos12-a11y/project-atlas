@@ -17,13 +17,13 @@ import tkinter as tk
 import webbrowser
 from collections import Counter
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
 from atlas import (__version__, browsers, config, deepcheck, defender, gti, hunt, installed, network, processes,
                    protection, pwned, score, space, updates)
-from atlas.app import build_scanner, guard_running, launch_tray, vt_usage_text
+from atlas.app import build_scanner, guard_running, launch_scan, launch_tray, vt_usage_text
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
 from atlas.links import check_link
@@ -32,6 +32,12 @@ from atlas.scanner import Verdict, threat_lines
 from atlas.vt_client import VTClient
 
 WINDOW_TITLE = "Project Atlas"
+
+# The sidebar: Home, then the tabs in five groups.
+GROUPS = [("home", "Home"), ("protection", "Protection"), ("pc", "My PC"), ("online", "Online safety"),
+          ("clean", "Clean up"), ("history", "History")]
+SIDEBAR_BG, SIDEBAR_HOVER, SIDEBAR_ON, CARD_BG = "#f3f4f6", "#e5e7eb", "#dbe7fb", "#f7f7f9"
+HOME_ROWS = 5  # how many "needs a look" rows Home shows
 
 VERDICT_COLORS = {"malicious": "#c62828", "suspicious": "#d84315", "unknown": "#9a7400",
                   "error": "#6a1b9a", "clean": "#2e7d32"}
@@ -169,6 +175,12 @@ def style_window(root: tk.Tk, scale: float) -> None:
     style.configure("Muted.TLabel", foreground="#666666", background="#ffffff")
     style.configure("Summary.TLabel", foreground="#444444")
     style.configure("Update.TLabel", foreground="#1d4ed8", background="#ffffff", font=("Segoe UI", 10, "bold"))
+    style.configure("Section.TLabel", background="#ffffff", font=("Segoe UI Semibold", 12))
+    style.configure("Heading.TLabel", font=("Segoe UI Semibold", 12))
+    style.configure("RowTitle.TLabel", background="#ffffff", font=("Segoe UI Semibold", 10))
+    style.configure("OnBody.TLabel", background="#ffffff", foreground="#2e7d32", font=("Segoe UI", 10))
+    style.configure("Bang.TLabel", background="#ffffff", foreground=VERDICT_COLORS["suspicious"],
+                    font=("Segoe UI", 11, "bold"))
 
 
 class AtlasWindow:
@@ -191,20 +203,7 @@ class AtlasWindow:
         root.configure(background="#ffffff")
         self._style()
         self._build_header()
-        self.tabs = ttk.Notebook(root)
-        self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 14))
-        self.tabs.add(self._build_startup_tab(), text="  Startup items  ")
-        self.tabs.add(self._build_running_tab(), text="  Running now  ")
-        self.tabs.add(self._build_installed_tab(), text="  Installed  ")
-        self.tabs.add(self._build_protection_tab(), text="  Protection  ")
-        self.tabs.add(self._build_hunt_tab(), text="  Threat hunt  ")
-        self.tabs.add(self._build_fullscan_tab(), text="  Full scan  ")
-        self.tabs.add(self._build_activity_tab(), text="  Activity  ")
-        self.tabs.add(self._build_cleanup_tab(), text="  Cleanup  ")
-        self.tabs.add(self._build_space_tab(), text="  Disk space  ")
-        self.tabs.add(self._build_browsers_tab(), text="  Browsers  ")
-        self.tabs.add(self._build_scam_tab(), text="  Scam check  ")
-        self.tabs.add(self._build_quarantine_tab(), text="  Quarantine  ")
+        self._build_body()
         root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.refresh_all()
@@ -212,6 +211,244 @@ class AtlasWindow:
         root.after(5000, self._tick)
         if not self.startup_rows or any(autorun_group(r) == "unchecked" for r in self.startup_rows.values()):
             root.after(500, self.check_startup)  # never checked with this version: check now
+
+    # --- Layout: a sidebar of groups, each with its own tabs ------------------------
+
+    def _build_body(self) -> None:
+        body = ttk.Frame(self.root, style="Header.TFrame")
+        body.pack(fill="both", expand=True, padx=(0, 14), pady=(4, 14))
+        self.sidebar = tk.Frame(body, background=SIDEBAR_BG, padx=6, pady=8)
+        self.sidebar.pack(side="left", fill="y", padx=(14, 10))
+        self.content = ttk.Frame(body, style="Header.TFrame")
+        self.content.pack(side="left", fill="both", expand=True)
+        self.pages: dict[str, tk.Widget] = {"home": self._build_home(self.content)}
+        self.tab_frames: dict[str, tuple[str, ttk.Frame]] = {}  # tab name -> (group, its frame)
+        groups = [
+            ("protection", [("Checks", self._build_protection_tab), ("Full scan", self._build_fullscan_tab),
+                            ("Threat hunt", self._build_hunt_tab)]),
+            ("pc", [("Startup items", self._build_startup_tab), ("Running now", self._build_running_tab),
+                    ("Installed", self._build_installed_tab)]),
+            ("online", [("Message and link check", self._build_scam_tab), ("Browsers", self._build_browsers_tab),
+                        ("Passwords", self._build_passwords_tab)]),
+            ("clean", [("Cleanup", self._build_cleanup_tab), ("Disk space", self._build_space_tab)]),
+            ("history", [("Activity", self._build_activity_tab), ("Quarantine", self._build_quarantine_tab),
+                         ("Weekly reports", self._build_reports_tab)]),
+        ]
+        for group, tabs in groups:
+            book = self.pages[group] = ttk.Notebook(self.content)
+            for name, build in tabs:
+                frame = build(book)
+                book.add(frame, text=f"  {name}  ")
+                self.tab_frames[name] = (group, frame)
+        self.nav: dict[str, tk.Label] = {}
+        for group, title in GROUPS:
+            item = tk.Label(self.sidebar, text=title, anchor="w", background=SIDEBAR_BG, foreground="#222222",
+                            font=("Segoe UI", 11), padx=int(14 * self.scale), pady=int(9 * self.scale),
+                            width=14, cursor="hand2")
+            item.pack(fill="x", pady=1)
+            item.bind("<Button-1>", lambda _, g=group: self.show(g))
+            item.bind("<Enter>", lambda _, w=item, g=group: g != self.page and w.configure(background=SIDEBAR_HOVER))
+            item.bind("<Leave>", lambda _, w=item, g=group: g != self.page and w.configure(background=SIDEBAR_BG))
+            self.nav[group] = item
+        self.page = ""
+        self.show("home")
+
+    def show(self, group: str, tab: str | None = None) -> None:
+        """Switch to a group (and one of its tabs)."""
+        if group != self.page:
+            if self.page:
+                self.pages[self.page].pack_forget()
+            self.pages[group].pack(fill="both", expand=True)
+            self.page = group
+        for g, item in self.nav.items():
+            item.configure(background=SIDEBAR_ON if g == group else SIDEBAR_BG,
+                           font=("Segoe UI Semibold" if g == group else "Segoe UI", 11))
+        if tab:
+            self.pages[group].select(self.tab_frames[tab][1])
+
+    def show_tab(self, tab: str) -> None:
+        self.show(self.tab_frames[tab][0], tab)
+
+    # --- Home -------------------------------------------------------------------------
+
+    def _build_home(self, parent) -> ttk.Frame:
+        page = ttk.Frame(parent, style="Header.TFrame", padding=(8, 4, 0, 0))
+        top = ttk.Frame(page, style="Header.TFrame")
+        top.pack(fill="x")
+        card = tk.Frame(top, background=CARD_BG, padx=int(22 * self.scale), pady=int(14 * self.scale))
+        card.pack(side="left", fill="y")
+        tk.Label(card, text="Health score", background=CARD_BG, foreground="#555555",
+                 font=("Segoe UI", 11)).pack(anchor="w")
+        self.home_score = tk.Label(card, text="--", background=CARD_BG, font=("Segoe UI Semibold", 40))
+        self.home_score.pack(anchor="w")
+        self.home_label = tk.Label(card, text="", background=CARD_BG, font=("Segoe UI Semibold", 12))
+        self.home_label.pack(anchor="w")
+        self.home_when = tk.Label(card, text="", background=CARD_BG, foreground="#666666", font=("Segoe UI", 9))
+        self.home_when.pack(anchor="w", pady=(4, 0))
+        self.home_button = ttk.Button(card, text="Check again", command=self.check_home)
+        self.home_button.pack(anchor="w", pady=(10, 0))
+
+        actions = ttk.Frame(top, style="Header.TFrame", padding=(int(24 * self.scale), 0, 0, 0))
+        actions.pack(side="left", fill="both", expand=True)
+        ttk.Label(actions, text="Quick actions", style="Section.TLabel").grid(row=0, column=0, columnspan=3,
+                                                                              sticky="w", pady=(0, 6))
+        quick = [("Scan a file...", self._scan_files), ("Check a message or link",
+                                                         lambda: self.show_tab("Message and link check")),
+                 ("Full scan", lambda: self.show_tab("Full scan")),
+                 ("Clean up junk", self._home_cleanup), ("Check a password...", self._check_password),
+                 ("Weekly report", self._weekly_report)]
+        for i, (text, command) in enumerate(quick):
+            ttk.Button(actions, text=text, command=command, width=24).grid(row=1 + i // 3, column=i % 3, sticky="ew",
+                                                                           padx=(0, 8), pady=4, ipady=4)
+
+        ttk.Label(page, text="Needs a look", style="Section.TLabel").pack(anchor="w", pady=(18, 4))
+        self.home_list = ttk.Frame(page, style="Header.TFrame")
+        self.home_list.pack(fill="both", expand=True)
+        self.home_more = ttk.Label(page, style="Muted.TLabel", cursor="hand2")
+        self.home_more.pack(anchor="w", pady=(6, 0))
+        self.home_more.bind("<Button-1>", lambda _: self.show_tab("Checks"))
+        last = score.recorded(self.store, date.today())
+        if last:  # the tray's last check, until this one is done
+            self._show_score(last["value"], score.label_for(last["value"]), "From the last check today")
+        self.root.after(300, self.check_home)
+        return page
+
+    def _show_score(self, value: int, label: str, when: str) -> None:
+        color = "#2e7d32" if value >= score.GOOD else "#9a7400" if value >= score.FAIR else "#c62828"
+        self.home_score.configure(text=f"{value}", foreground=color)
+        self.home_label.configure(text=f"{label}  ·  out of 100", foreground=color)
+        self.home_when.configure(text=when)
+
+    def check_home(self) -> None:
+        """The Protection checks and the threat hunt, the same as the tray's hourly check."""
+        self.home_button.configure(state="disabled")
+        self.home_when.configure(text="Checking...")
+
+        def work():
+            system = protection.check_system(self.scanner)
+            return system, hunt.check_hunt(self.scanner)
+
+        def done(result) -> None:
+            self.home_button.configure(state="normal")
+            if result is None:
+                self.home_when.configure(text="The check didn't finish.")
+                return
+            system, hunted = result
+            self._fill_protection(system)
+            self._fill_hunt(hunted)
+            health = score.health_score(system + hunted)
+            score.record(self.store, health)
+            self._show_score(health.value, health.label, f"Checked at {datetime.now():%H:%M}")
+            self._fill_home([f for f in system if f.needs_look], [f for f in hunted if f.needs_look],
+                            sum(1 for f in system + hunted if f.level == "note"))
+
+        self.in_background(work, done)
+
+    def _fill_home(self, system: list, hunted: list, notes: int) -> None:
+        for child in self.home_list.winfo_children():
+            child.destroy()
+        rows = sorted(system + hunted, key=lambda f: f.area not in score.SERIOUS_AREAS)
+        look = len(rows)
+        self.nav["protection"].configure(text=f"Protection  ({look})" if look else "Protection")
+        if not rows:
+            ttk.Label(self.home_list, text="✓  Nothing needs a look. Atlas keeps checking every hour.",
+                      style="OnBody.TLabel").pack(anchor="w", pady=4)
+        for f in rows[:HOME_ROWS]:
+            row = ttk.Frame(self.home_list, style="Header.TFrame")
+            row.pack(fill="x", pady=3)
+            ttk.Label(row, text="!", style="Bang.TLabel", width=2).pack(side="left", anchor="n")
+            text = ttk.Frame(row, style="Header.TFrame")
+            text.pack(side="left", fill="x", expand=True)
+            ttk.Label(text, text=f.title, style="RowTitle.TLabel").pack(anchor="w")
+            why = f"{f.area}  ·  {f.details[0]}" if f.details else f.area
+            ttk.Label(text, text=why, style="Muted.TLabel", wraplength=int(700 * self.scale)).pack(anchor="w")
+            in_hunt = f in hunted
+            ttk.Button(row, text="Details", command=lambda f=f, h=in_hunt: self._home_details(f, h)).pack(
+                side="right", padx=(6, 0))
+            if f.fix and not in_hunt:
+                ttk.Button(row, text=f.fix_label or "Fix...", command=lambda f=f: self._run_fix(f, self.check_home)
+                           ).pack(side="right")
+        more = []
+        if look > HOME_ROWS:
+            more.append(f"{look - HOME_ROWS} more need a look")
+        if notes:
+            more.append(f"{notes} notes")
+        self.home_more.configure(text=(" and ".join(more) + ": see Protection >" if more else ""))
+
+    def _home_details(self, f, in_hunt: bool) -> None:
+        tab, rows, table = ("Threat hunt", self.hunt_findings, self.hunt_table) if in_hunt else \
+            ("Checks", self.protection_findings, self.protection_table)
+        self.show_tab(tab)
+        iid = next((i for i, x in rows.items() if x is f), None)
+        if iid:
+            table.tree.selection_set(iid)
+            table.tree.see(iid)
+
+    def _home_cleanup(self) -> None:
+        self.show_tab("Cleanup")
+        if str(self.junk_scan_button["state"]) != "disabled":
+            self.scan_junk()
+
+    def _scan_files(self) -> None:
+        from tkinter import filedialog
+
+        paths = filedialog.askopenfilenames(parent=self.root, title="Choose files to check")
+        if paths:
+            launch_scan(list(paths))
+
+    # --- Passwords and weekly reports -------------------------------------------------
+
+    def _build_passwords_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=16)
+        ttk.Label(tab, text="Has a password appeared in a data leak?", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(tab, style="Summary.TLabel", wraplength=int(800 * self.scale),
+                  text="Atlas checks it with Have I Been Pwned. The password never leaves this PC: Atlas sends only "
+                       "the first 5 characters of a scrambled (hashed) version, and nothing is saved. If it has "
+                       "leaked, change it everywhere you use it, and use a different password for each site (a "
+                       "password manager makes that easy).").pack(anchor="w", pady=(6, 12))
+        ttk.Button(tab, text="Check a password...", command=self._check_password).pack(anchor="w")
+        return tab
+
+    def _build_reports_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        ttk.Label(bar, style="Summary.TLabel", text="Once a week the tray writes a report: your health score, what "
+                  "changed and what Atlas did. They stay on this PC.").pack(side="left")
+        ttk.Button(bar, text="Write one now", command=self._weekly_report).pack(side="right")
+        self.reports_table = Table(tab, [("name", "Week ending", 300), ("details", "File", 700)],
+                                   lambda iid: None, self.scale)
+        self.reports_table.pack(fill="both", expand=True, pady=(8, 6))
+        self.reports_table.tree.bind("<Double-1>", lambda _: self._open_report())
+        ttk.Button(tab, text="Open", command=self._open_report).pack(anchor="w")
+        self.fill_reports()
+        return tab
+
+    def fill_reports(self) -> None:
+        folder = config.data_dir() / "reports"
+        files = sorted(folder.glob("atlas-week-*.html"), reverse=True) if folder.is_dir() else []
+        self.reports_table.replace([(str(f), (f.stem.removeprefix("atlas-week-"), f.name), ()) for f in files])
+
+    def _open_report(self) -> None:
+        iid = self.reports_table.selection()
+        if iid:
+            os.startfile(iid)
+
+    def _weekly_report(self) -> None:
+        from atlas import report
+
+        def work():
+            findings = protection.check_system(self.scanner) + hunt.check_hunt(self.scanner)
+            weekly = report.build(self.store, score.health_score(findings))
+            return report.save(weekly, config.data_dir() / "reports")
+
+        def done(path) -> None:
+            if path:
+                self.fill_reports()
+                os.startfile(path)
+
+        self.in_background(work, done)
+
 
     # --- Plumbing ------------------------------------------------------------
 
@@ -341,8 +578,8 @@ class AtlasWindow:
 
     # --- Startup items -------------------------------------------------------
 
-    def _build_startup_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_startup_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         ttk.Label(bar, text="Show").pack(side="left")
@@ -505,8 +742,8 @@ class AtlasWindow:
 
     # --- Activity ------------------------------------------------------------
 
-    def _build_activity_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_activity_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x", pady=(0, 8))
         ttk.Label(bar, text="Everything Atlas has checked, newest first.", style="Summary.TLabel").pack(side="left")
@@ -551,8 +788,8 @@ class AtlasWindow:
 
     CHECK = {True: "☑", False: "☐", None: "▣"}  # all / none / some selected
 
-    def _build_cleanup_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_cleanup_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         ttk.Label(bar, text="Find junk that's safe to remove, and leftovers that no longer have a home.",
@@ -766,8 +1003,8 @@ class AtlasWindow:
 
     # --- Disk space ----------------------------------------------------------
 
-    def _build_space_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_space_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.space_mode = tk.StringVar(value="dupes")
@@ -1039,8 +1276,8 @@ class AtlasWindow:
 
     # --- Browsers: link checker and ad-spam finder -------------------------------------
 
-    def _build_browsers_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_browsers_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         checker = ttk.LabelFrame(tab, text=" Check a link before you open it ", padding=8)
         checker.pack(fill="x")
         row = ttk.Frame(checker)
@@ -1229,8 +1466,8 @@ class AtlasWindow:
 
     # --- Running now: programs and network ------------------------------------
 
-    def _build_running_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_running_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.running_mode = tk.StringVar(value="programs")
@@ -1450,8 +1687,8 @@ class AtlasWindow:
 
     # --- Installed programs -------------------------------------------------------
 
-    def _build_installed_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_installed_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.installed_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
@@ -1566,8 +1803,8 @@ class AtlasWindow:
 
     # --- Protection: Defender and hijacks ------------------------------------------------
 
-    def _build_protection_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_protection_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.protection_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
@@ -1578,8 +1815,6 @@ class AtlasWindow:
         self.protection_summary.pack(side="left", fill="x", expand=True)
         self.protection_button = ttk.Button(bar, text="Check now", command=self.check_protection)
         self.protection_button.pack(side="right")
-        ttk.Button(bar, text="Check a password...", command=self._check_password).pack(side="right", padx=(0, 6))
-        ttk.Button(bar, text="Weekly report", command=self._weekly_report).pack(side="right", padx=(0, 6))
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
         self.protection_table = Table(panes, [("verdict", "Status", 120), ("area", "Area", 200),
@@ -1610,20 +1845,20 @@ class AtlasWindow:
 
         def done(findings) -> None:
             self.protection_button.configure(state="normal")
-            if findings is None:
-                return
-            self.protection_findings = {str(i): f for i, f in enumerate(findings)}
-            label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
-            self.protection_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
-                                           for iid, f in self.protection_findings.items()])
-            look = sum(1 for f in findings if f.needs_look)
-            health = score.health_score(findings)
-            score.record(self.store, health)
-            self.protection_summary.configure(text=f"Health score {health.text}  ·  {len(findings)} checks: " +
-                                              (f"{look} need a look" if look else "nothing needs a look"))
-            self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
+            if findings is not None:
+                self._fill_protection(findings)
 
         self.in_background(lambda: protection.check_system(self.scanner), done)
+
+    def _fill_protection(self, findings) -> None:
+        self.protection_findings = {str(i): f for i, f in enumerate(findings)}
+        label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
+        self.protection_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
+                                       for iid, f in self.protection_findings.items()])
+        look = sum(1 for f in findings if f.needs_look)
+        self.protection_summary.configure(text=f"{len(findings)} checks: " +
+                                          (f"{look} need a look" if look else "nothing needs a look"))
+        self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
 
     def _show_protection_row(self, iid: str) -> None:
         f = self.protection_findings.get(iid)
@@ -1641,8 +1876,10 @@ class AtlasWindow:
 
     def _fix_finding(self) -> None:
         f = self.protection_findings.get(self.protection_table.selection() or "")
-        if f is None or not f.fix:
-            return
+        if f is not None and f.fix:
+            self._run_fix(f, self.check_protection)
+
+    def _run_fix(self, f, then: Callable[[], None]) -> None:
         question = protection.describe_fix(f)
         if question and not messagebox.askyesno(WINDOW_TITLE, question):
             return
@@ -1653,7 +1890,7 @@ class AtlasWindow:
             return
         if message:
             messagebox.showinfo(WINDOW_TITLE, message)
-            self.check_protection()
+            then()
 
     def _check_password(self) -> None:
         password = simpledialog.askstring(
@@ -1671,8 +1908,8 @@ class AtlasWindow:
 
     # --- Full scan ---------------------------------------------------------------
 
-    def _build_fullscan_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_fullscan_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.fullscan_summary = ttk.Label(
@@ -1810,8 +2047,8 @@ class AtlasWindow:
 
     # --- Scam check ----------------------------------------------------------------
 
-    def _build_scam_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_scam_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
@@ -1863,22 +2100,9 @@ class AtlasWindow:
 
         self.in_background(lambda: scam.check_message(text, self.scanner), done)
 
-    def _weekly_report(self) -> None:
-        from atlas import report, score
 
-        findings = list(self.protection_findings.values())
-        if not findings:
-            messagebox.showinfo(WINDOW_TITLE, "Click Check now first, so the report has today's results.")
-            return
-
-        def work():
-            weekly = report.build(self.store, score.health_score(findings))
-            return report.save(weekly, config.data_dir() / "reports")
-
-        self.in_background(work, lambda path: path and os.startfile(path))
-
-    def _build_hunt_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_hunt_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x")
         self.hunt_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
@@ -1951,20 +2175,23 @@ class AtlasWindow:
         def done(findings) -> None:
             self.hunt_button.configure(state="normal")
             self.hunt_deep.configure(state="normal")
-            self.hunt_intel.configure(text=self._intel_text())
             if findings is None:
                 self.hunt_summary.configure(text="The check didn't finish.")
                 return
-            self.hunt_findings = {str(i): f for i, f in enumerate(findings)}
-            label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
-            self.hunt_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
-                                     for iid, f in self.hunt_findings.items()])
-            look = sum(1 for f in findings if f.needs_look)
-            self.hunt_summary.configure(text=(f"{look} thing(s) need a look" if look else "Nothing needs a look")
-                                        + f" ({len(findings)} findings" + (", with the deep check)" if deep else ")"))
-            self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
+            self._fill_hunt(findings, deep)
 
         self.in_background(work, done)
+
+    def _fill_hunt(self, findings, deep: bool = False) -> None:
+        self.hunt_intel.configure(text=self._intel_text())
+        self.hunt_findings = {str(i): f for i, f in enumerate(findings)}
+        label = {"warn": "NEEDS A LOOK", "note": "NOTE", "ok": "OK"}
+        self.hunt_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
+                                 for iid, f in self.hunt_findings.items()])
+        look = sum(1 for f in findings if f.needs_look)
+        self.hunt_summary.configure(text=(f"{look} thing(s) need a look" if look else "Nothing needs a look")
+                                    + f" ({len(findings)} findings" + (", with the deep check)" if deep else ")"))
+        self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
 
     def _hunt_selected(self):
         return self.hunt_findings.get(self.hunt_table.selection() or "")
@@ -2003,8 +2230,8 @@ class AtlasWindow:
         except (OSError, ValueError) as exc:
             messagebox.showerror(WINDOW_TITLE, f"That didn't work:\n\n{exc}")
 
-    def _build_quarantine_tab(self) -> ttk.Frame:
-        tab = ttk.Frame(self.tabs, padding=10)
+    def _build_quarantine_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
         bar = ttk.Frame(tab)
         bar.pack(fill="x", pady=(0, 8))
         ttk.Label(bar, text="Files Atlas moved out of the way. They can't run from here.",
