@@ -29,6 +29,7 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulner
 KEV_LINK = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext="
 KEV_YEARS = 3  # older entries are about versions long gone
 WINGET_HOURS = 12  # winget takes a few seconds: don't ask it every hour
+GROUP_OVER = 3  # more ordinary updates than this become one row
 UPDATE_DAYS = 35  # Windows installs updates at least monthly
 REBOOT_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"
 # Words that don't identify a product.
@@ -108,6 +109,16 @@ def upgrade_command(package_id: str) -> list[str]:
     return ["cmd", "/k", "winget", "upgrade", "--id", package_id, "--exact", "--source", "winget"]
 
 
+SAFE_ID = re.compile(r"^[\w.+-]+$")
+
+
+def upgrade_all_command(package_ids: list[str]) -> str:
+    """Update all, one after another, in one window. winget ids are letters, digits and dots; anything else is
+    left out rather than passed to cmd."""
+    steps = [f"winget upgrade --id {i} --exact --source winget" for i in package_ids if SAFE_ID.match(i)]
+    return "cmd /k " + " & ".join(steps)
+
+
 # --- CISA KEV ----------------------------------------------------------------------------------------
 
 def kev_catalog(store=None) -> list[dict]:
@@ -165,6 +176,17 @@ def update_findings(upgrades: list[Upgrade] | None, catalog: list[dict]) -> list
                         key="updates:no-winget", fix="open", fix_label="Get App Installer",
                         data={"url": "ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"})]
     found = []
+    ordinary = [u for u in upgrades if not kev_matches(u.name, catalog)]
+    if len(ordinary) > GROUP_OVER:
+        found.append(Finding("Updates", f"{len(ordinary)} programs have updates", NOTE,
+                             ["Updates fix security holes as well as bugs. None of these are on CISA's list of "
+                              "flaws attackers are using, so there's no rush.",
+                              "Update all opens winget in a window and updates them one after another. Close the "
+                              "programs first."] + [f"{u.name}: {u.version or 'unknown'} -> {u.available}"
+                                                   for u in ordinary],
+                             key="updates:ordinary", fix="winget-upgrade-all", fix_label="Update all",
+                             data={"ids": [u.id for u in ordinary], "names": [u.name for u in ordinary]}))
+        upgrades = [u for u in upgrades if u not in ordinary]
     for u in upgrades:
         holes = kev_matches(u.name, catalog)
         details = [f"Installed: {u.version or 'unknown'}. Newest: {u.available}."]
@@ -183,7 +205,7 @@ def update_findings(upgrades: list[Upgrade] | None, catalog: list[dict]) -> list
                              key=f"updates:{u.id.lower()}:{u.available}", fix="winget-upgrade",
                              fix_label="Update", data={"id": u.id, "name": u.name},
                              vt_link=KEV_LINK + holes[0]["cveID"] if holes else None))
-    if not upgrades:
+    if not found:
         found.append(Finding("Updates", "Your programs are up to date", OK, key="updates:ok",
                              details=["Checked with winget. Programs it doesn't know about update themselves or "
                                       "through their own menus."]))

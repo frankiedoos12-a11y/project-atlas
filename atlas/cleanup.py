@@ -45,6 +45,7 @@ HOW_LABELS = {
     "recycle": "Move to Recycle Bin",
     "registry": "Remove entry (backup saved)",
     "empty-bin": "Empty for good (can't be undone)",
+    "files": "Delete for good",
 }
 
 
@@ -57,6 +58,7 @@ class JunkItem:
     how: str = "delete"  # a key of HOW_LABELS
     root: Path | None = None  # "delete"/"contents" items must stay inside this folder
     registry: tuple[str, str, str] | None = None  # (hive, key, value name) for how="registry"
+    files: tuple[str, ...] = ()  # for how="files": these names inside `path` (files or folders)
     blocked: str | None = None  # why it can't be removed right now
     selected: bool = True
 
@@ -241,6 +243,85 @@ def find_browser_caches(running: set[str]) -> JunkCategory:
                 blocked = "Close Firefox first" if "firefox.exe" in running else None
                 cat.items.append(JunkItem(f"Firefox ({profile.name.split('.')[-1]}) cache", folder, size,
                                           str(folder), "contents", root=firefox, blocked=blocked))
+    return cat
+
+
+# --- Privacy: history, cookies and the recent files list. Never ticked by default. ----
+
+CHROMIUM_HISTORY = ("History", "History-journal", "Visited Links", "Top Sites", "Top Sites-journal", "Shortcuts",
+                    "Shortcuts-journal", "Network Action Predictor", "Network Action Predictor-journal")
+CHROMIUM_COOKIES = ("Network/Cookies", "Network/Cookies-journal", "Cookies", "Cookies-journal", "Local Storage",
+                    "Session Storage", "IndexedDB", "Service Worker", "WebStorage")
+FIREFOX_COOKIES = ("cookies.sqlite", "cookies.sqlite-wal", "cookies.sqlite-shm", "webappsstore.sqlite",
+                   "webappsstore.sqlite-wal", "webappsstore.sqlite-shm")
+
+
+def _chromium_profiles(root: Path) -> list[Path]:
+    if (root / "Preferences").exists():  # Opera keeps one profile in the root
+        return [root]
+    return [p for p in root.iterdir() if p.is_dir() and (p.name == "Default" or p.name.startswith("Profile "))]
+
+
+def _files_item(label: str, folder: Path, names: tuple[str, ...], root: Path, blocked: str | None) -> JunkItem | None:
+    present = tuple(n for n in names if (folder / n).exists())
+    if not present:
+        return None
+    size = sum(measure(folder / n)[0] for n in present)
+    return JunkItem(label, folder, size, str(folder), "files", root=root, files=present, blocked=blocked,
+                    selected=False)
+
+
+def _browser_privacy(kind: str, running: set[str]) -> list[JunkItem]:
+    items = []
+    for name, exe, base in BROWSERS:
+        root = base()
+        if not root.is_dir():
+            continue
+        blocked = f"Close {name} first" if exe in running else None
+        for profile in _chromium_profiles(root):
+            label = f"{name}{'' if profile == root else f' ({profile.name})'}"
+            names = CHROMIUM_HISTORY if kind == "history" else CHROMIUM_COOKIES
+            item = _files_item(label, profile, names, root, blocked)
+            if item:
+                items.append(item)
+    firefox = _roaming() / "Mozilla/Firefox/Profiles"
+    if kind == "cookies" and firefox.is_dir():
+        blocked = "Close Firefox first" if "firefox.exe" in running else None
+        for profile in firefox.iterdir():
+            item = _files_item(f"Firefox ({profile.name.split('.')[-1]})", profile, FIREFOX_COOKIES, firefox, blocked)
+            if item:
+                items.append(item)
+    return items
+
+
+def find_browsing_history(running: set[str]) -> JunkCategory:
+    return JunkCategory("privacy-history", "Privacy: browsing history",
+                        "Which sites you visited, and the shortcuts on the new tab page. Bookmarks, passwords and "
+                        "saved form data are kept. Not ticked unless you tick it. (Firefox keeps history together "
+                        "with bookmarks: clear it in Firefox with Ctrl+Shift+Delete.)",
+                        _browser_privacy("history", running))
+
+
+def find_cookies(running: set[str]) -> JunkCategory:
+    return JunkCategory("privacy-cookies", "Privacy: cookies and site data",
+                        "What websites store to remember you, including trackers. Clearing it SIGNS YOU OUT of "
+                        "every website in that browser. Not ticked unless you tick it.",
+                        _browser_privacy("cookies", running))
+
+
+def find_recent_files() -> JunkCategory:
+    cat = JunkCategory("privacy-recent", "Privacy: recent files list",
+                       "The list of files you opened lately, shown in File Explorer's Home and Quick access. Only "
+                       "the list is cleared; the files themselves are untouched. Not ticked unless you tick it.")
+    recent = _roaming() / "Microsoft/Windows/Recent"
+    try:
+        links = tuple(sorted(e.name for e in os.scandir(recent) if e.is_file() and e.name.lower().endswith(".lnk")))
+    except OSError:
+        links = ()
+    if links:
+        item = _files_item(f"{len(links)} recently opened files", recent, links, recent, None)
+        if item:
+            cat.items.append(item)
     return cat
 
 
@@ -466,6 +547,9 @@ def scan_all(progress: Callable[[str], None] | None = None) -> list[JunkCategory
         ("Old installers", lambda: find_old_installers(now)),
         ("App data with no program", lambda: find_orphaned_app_data(now)),
         ("Recycle Bin", find_recycle_bin),
+        ("Browsing history", lambda: find_browsing_history(running)),
+        ("Cookies and site data", lambda: find_cookies(running)),
+        ("Recent files list", find_recent_files),
     ]
     categories = []
     for name, finder in steps:
@@ -559,6 +643,20 @@ def clean(items: list[JunkItem], backup_dir: Path,
                         raise PermissionError("in use; close the program using it and try again")
                 if left:
                     result.skipped.append(f"{item.label}: partly in use, {human_size(left)} left")
+                freed = max(0, item.size - left)
+            elif item.how == "files":
+                left = 0
+                for name in item.files:
+                    target = item.path / name
+                    if item.root is None or not _inside(target, item.root):
+                        raise PermissionError("outside the folder it was found in; left alone")
+                    if target.exists() or _is_link(target):
+                        try:
+                            _delete(target)
+                        except OSError:
+                            left += measure(target)[0]
+                if left >= item.size and item.size:
+                    raise PermissionError("in use; close the program using it and try again")
                 freed = max(0, item.size - left)
             elif item.how == "recycle":
                 _recycle(item.path)

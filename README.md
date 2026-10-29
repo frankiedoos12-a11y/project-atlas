@@ -107,6 +107,9 @@ Scanning only looks. Nothing is removed until you choose **Clean selected** and 
 | Old installers in Downloads (30+ days) | No | Recycle Bin |
 | App data with no installed program (unused 180+ days) | No | Recycle Bin. Atlas can't be certain, so review each one |
 | Recycle Bin | No | Emptied for good. This can't be undone, so it's never ticked for you |
+| Privacy: browsing history (Chrome, Edge, Brave, Opera) | No | Deleted for good: visited sites and new-tab shortcuts. Bookmarks, passwords and saved form data are kept. Locked while that browser is open. Firefox keeps history with bookmarks, so clear it in Firefox (Ctrl+Shift+Delete) |
+| Privacy: cookies and site data (those browsers and Firefox) | No | Deleted for good. This **signs you out of every website** in that browser, and clears trackers too |
+| Privacy: recent files list | No | Clears File Explorer's list of files you opened lately. The files themselves are untouched |
 
 Deletion only ever happens inside the folder an item was found in. Every removal is logged, and one failure (e.g. a file in use) never stops the rest. `atlas cleanup` prints the same report in the console.
 
@@ -154,13 +157,14 @@ The tray repeats both checks every hour (`running_check_minutes`; `0` = only whe
 
 **Ask Defender.** Select a file in *Running now*, *Installed* or the right-click scan window and press **Ask Defender** for a second opinion from Microsoft Defender's own scanner. It only reports; Defender is told not to touch the file. `atlas second-opinion FILE` does the same.
 
-## 7. Protection: Defender, updates and hijacked settings
+## 7. Protection: Defender, updates, remote access and hijacked settings
 
 The **Protection** tab checks the settings malware and adware change so they can get in or steer your browsing:
 
 - **Defender.** Real-time protection, tamper protection, behaviour monitoring, how old the virus definitions are, and whether *Potentially unwanted app blocking* is on (it's off by default on many PCs, and it's the setting that stops adware and bundled junk). From Defender's own log for the last 30 days: exclusions that were added (malware's favourite way to hide), protection being switched off, tamper protection blocking a change, and what Defender found. Exclusions set by Windows policy are flagged too. If another antivirus is in charge, Atlas says so and leaves it alone.
 - **Extra protection Windows leaves off.** Cloud-delivered protection and block at first sight should be on. Defender also has *attack surface reduction* rules and *network protection*, which stop what most malware does first: Office macros and email attachments starting programs, scripts downloading programs, passwords being read out of memory, and dangerous sites in every browser. Windows Home has no switch for them, so **Turn on...** switches on 14 rules that suit a home PC (through Windows' own administrator prompt), and **Turn off again...** undoes it. Atlas also shows whether SmartScreen (Windows and Edge) and Smart App Control are on.
-- **Software updates.** Programs with a newer version, found with winget (built into Windows), and when Windows last installed an update or is waiting for a restart. Outdated programs whose maker appears in CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) catalog (flaws attackers are using right now) are marked **Update soon**, with the CVEs. **Update** runs winget in a window you can watch.
+- **Software updates.** Programs with a newer version, found with winget (built into Windows), and when Windows last installed an update or is waiting for a restart. Outdated programs whose maker appears in CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) catalog (flaws attackers are using right now) are marked **Update soon**, with the CVEs. **Update** runs winget in a window you can watch. When more than three other programs have updates, they're one row with **Update all**.
+- **Remote access.** AnyDesk, TeamViewer, ScreenConnect, Quick Assist, RustDesk and 22 other programs that let someone see and control the PC. They're legitimate, but they're how tech-support scams start: a caller or pop-up talks you into installing one. Atlas warns when one is running (with **End it**) or was downloaded in the last month, and notes installed ones. The tray pops up the moment one starts. If you use one on purpose, press **It's mine** and Atlas stays quiet about it (`trusted_remote_tools`).
 - **Disk health.** Drives Windows says are failing or wearing out. The deep check adds wear, temperature and read errors.
 - **Browser start page and search engine**, for every Chrome, Edge, Brave, Opera and Firefox profile. Known hijackers (Genieo, Conduit, Trovi, OneLaunch...) and search sites that come through a "partner" code are flagged; unusual search engines and start pages are looked up on VirusTotal. Google, Bing, DuckDuckGo and the like are fine.
 - **Browser policies.** Settings forced by a policy can't be changed back in the browser. Home PCs normally have none.
@@ -168,13 +172,27 @@ The **Protection** tab checks the settings malware and adware change so they can
 - **Hosts file.** Lines that block security or update sites, or that send a site (your bank, say) to a different address.
 - **DNS servers.** Known public resolvers and your router are fine; anything else is looked up on VirusTotal, with its owner shown.
 
-Each problem has a button. Most open the right page in Windows Security, Settings or the browser, so you make the change. Atlas changes a few things itself, only after asking: it can turn off your account's proxy setting and remove a browser policy set in your account (with a backup saved in the `backups` folder first), switch Defender's extra protection on or off, and start a program's update. The hosts file opens in Notepad as administrator for you to edit.
+Each problem has a button. Most open the right page in Windows Security, Settings or the browser, so you make the change. Atlas changes a few things itself, only after asking: it can turn off your account's proxy setting and remove a browser policy set in your account (with a backup saved in the `backups` folder first), switch Defender's extra protection on or off, start program updates, and end a running remote-access program. The hosts file opens in Notepad as administrator for you to edit.
 
 The tray re-runs these checks every hour (`system_check_minutes`) and pops up an alert when a new problem appears. The first run just notes what's already there; the tray menu shows how many things need a look. `atlas protection` prints the same list.
+
+**Health score.** The Protection checks and the threat hunt add up to one number from 0 to 100, shown on the Protection tab and in the tray menu: 90 and up is *Good*, 60 and up *Fair*, below that *Needs attention*. Things that need a look cost the most (more for Defender, remote access and threat-hunt findings), several in the same area cost less each, and notes cost a little.
+
+**Weekly report.** Once a week the tray writes a short report and pops up a summary: the health score and how it moved, what's new, what got fixed, and what Atlas did (files checked, flagged and quarantined, VirusTotal lookups, space cleaned). It's a page in `%LOCALAPPDATA%\ProjectAtlas\reports` that stays on the PC. **Weekly report** on the Protection tab, or `atlas report`, writes one now. Turn it off with `weekly_report`.
 
 **Check a password...** tells you whether a password has appeared in a data leak, using Have I Been Pwned. The password never leaves the PC: Atlas sends only the first 5 characters of its SHA-1 hash, and nothing is saved. `atlas password-check` does the same.
 
 Files VirusTotal flags now also show VirusTotal's own AI analysis (*Code Insight*, and a summary of what threat reports say about the file), when it has one.
+
+### Full scan
+
+The **Full scan** tab checks every program file on your drives (programs, DLLs, drivers and scripts) with VirusTotal, riskiest places first: your user folders, Downloads, Temp and ProgramData, then odd folders, then Program Files and Windows, newest files first. A free VirusTotal key does 500 lookups a day and 4 a minute, and a PC has tens of thousands of program files, so each run spends up to `full_scan_lookups` new lookups (200) and reuses answers it already has. Run it again another day and it carries on where it stopped. It runs at low priority so the PC stays quick, skips online-only OneDrive files (they'd be downloaded), and only looks: **Quarantine...** and **Ask Defender** are buttons. `atlas full-scan` does the same in the console.
+
+**Defender full scan...** starts Microsoft Defender's own full scan, and **Defender offline scan...** restarts the PC to scan before Windows starts, where hidden malware can't fight back. Both ask Windows for administrator permission.
+
+### Scam check
+
+Got an email, text or pop-up you're not sure about? Paste it into the **Scam check** tab (or `atlas scam-check`). Atlas looks for the usual scam tricks and explains each one it finds, quoting the words: asking for remote access, gift cards, crypto or wire payments, codes or passwords, "call this number", fake invoices and renewals, threats from the "police" or "IRS", virus scares, blackmail, prizes, unpaid tolls and parcels, secrecy and pressure. Every link in the message is checked like the link checker does. It answers *Looks like a scam*, *Be careful* or *Nothing obvious found*. Rules only, no AI service: the message stays on the PC, and only its links go to VirusTotal.
 
 ## 8. Installed programs
 
@@ -235,17 +253,19 @@ Once a day the tray checks GitHub for a newer version (`check_for_updates`). Whe
 
 ## The Atlas window
 
-Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has ten tabs:
+Open it from **Start menu > Project Atlas**, by clicking the tray globe, or with `atlas gui`. It has twelve tabs:
 
 - **Startup items**: everything set to start automatically, colour-coded by verdict, with a filter (*Not Microsoft*, *Needs a look*, *Microsoft*, *Leftovers*, *Everything*), a search box, sortable columns, and a details panel showing publisher, file, registry location and why Atlas judged it that way. Buttons open the file's folder or its VirusTotal page, and **Switch off / Switch on** the item. **Check now** re-runs a full check.
 - **Running now**: running programs (and DLLs) and network connections, checked with VirusTotal (see above).
 - **Installed**: installed programs, with adware and unwanted software called out, and **Uninstall...** (see above).
-- **Protection**: Defender and its extra protection, SmartScreen, software and Windows updates, disk health, browser start pages and search, proxy, hosts file and DNS, each with a fix button, plus the password check (see above).
+- **Protection**: the health score, Defender and its extra protection, SmartScreen, software and Windows updates, remote-access programs, disk health, browser start pages and search, proxy, hosts file and DNS, each with a fix button, plus the password check and the weekly report (see above).
 - **Threat hunt**: command lines, root certificates, drivers, open ports, registry hiding places and settings, user-folder programs, threat-intel matches and the administrator deep check (see above).
+- **Full scan**: every program file on the PC, a day's worth of lookups at a time, plus Defender's full and offline scans (see above).
 - **Activity**: every file Atlas has checked, newest first, with where it was downloaded from.
-- **Cleanup**: finds junk and leftovers with no home (see below). Tick what to remove, then **Clean selected**.
+- **Cleanup**: finds junk, leftovers with no home, and privacy traces (see above). Tick what to remove, then **Clean selected**.
 - **Disk space**: duplicate files and big files, with *Recycle*, *Move to folder…* and *Free up space* (see above).
 - **Browsers**: link checker, notification spam and extensions (see above).
+- **Scam check**: paste a message to see whether it looks like a scam (see above).
 - **Quarantine**: files Atlas moved out of the way, with **Restore** (asks first).
 
 The header shows whether protection is running, whether your VirusTotal key is connected, today's VirusTotal lookups, and when an update is available.
@@ -255,7 +275,7 @@ The header shows whether protection is running, whether your VirusTotal key is c
 The globe is **blue** while protecting, **grey** while paused, and **red** after an alert (until you choose *Clear alert*). Left-click it to open the Atlas window, or right-click it for:
 
 - Open Project Atlas
-- *Protection and threat hunt: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
+- *Health score: N/100* (after the first hourly check), *Protection and threat hunt: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
 - Pause protection
 - Check startup items now
 - Check running programs and network now
@@ -279,7 +299,10 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas autoruns` | Check everything set to start automatically (`--all` to include Microsoft items) |
 | `atlas running` | Check running programs with VirusTotal (`--dlls` to include loaded DLLs, `--all` to list clean ones too) |
 | `atlas network` | Check the internet addresses programs are connected to (`--all` to list clean ones too) |
-| `atlas protection` | Check Defender, updates, disk health, browser start pages and search, proxy, hosts file and DNS (`--all` to list what's fine too) |
+| `atlas protection` | Check Defender, updates, remote access, disk health, browser start pages and search, proxy, hosts file and DNS, and show the health score (`--all` to list what's fine too) |
+| `atlas scam-check [FILE]` | Is this message a scam? Paste it, or give a text file holding it |
+| `atlas full-scan` | Check every program file on the PC, riskiest first (`--budget N` new VirusTotal lookups; default `full_scan_lookups`) |
+| `atlas report` | Write this week's report now and open it (`--no-open` to just save it) |
 | `atlas password-check` | Check whether a password has appeared in a data leak (only 5 characters of its hash leave the PC) |
 | `atlas installed` | Check installed programs for adware and unwanted software (`--all` to list every program) |
 | `atlas second-opinion FILE...` | Ask Microsoft Defender to scan files (report only) |
@@ -304,7 +327,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Where things live
 
-- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running, Protection and threat hunt checks run, new-program alerts, update checks, Google Threat Intelligence)
+- Settings: `%APPDATA%\ProjectAtlas\config.json` (watched folders, thresholds, uploads, how often the startup, running, Protection and threat hunt checks run, new-program alerts, update checks, Google Threat Intelligence, remote-access programs you use, the weekly report, full-scan lookups)
 - History, cache, quarantine, backups, log: `%LOCALAPPDATA%\ProjectAtlas\`
 - API key: Windows Credential Manager, entry `ProjectAtlas`
 
@@ -312,7 +335,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Privacy
 
-`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash.
+`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal), and the weekly report never leaves the PC.
 
 ## Development
 

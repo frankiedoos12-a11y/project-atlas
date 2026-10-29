@@ -366,6 +366,19 @@ class Store:
             row = self._conn.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM cleanup_log").fetchone()
         return row[0], row[1]
 
+    def activity_since(self, since: datetime) -> dict:
+        """What Atlas did since then, for the weekly report: files checked by verdict, files quarantined,
+        cleanup items and bytes."""
+        start = since.astimezone(timezone.utc).isoformat() if since.tzinfo else since.isoformat()
+        with self._lock:
+            verdicts = dict(self._conn.execute(
+                "SELECT verdict, COUNT(*) FROM scans WHERE scanned_at >= ? GROUP BY verdict", (start,)).fetchall())
+            quarantined = self._conn.execute(
+                "SELECT COUNT(*) FROM quarantine WHERE quarantined_at >= ?", (start,)).fetchone()[0]
+            cleaned = self._conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM cleanup_log WHERE cleaned_at >= ?", (start,)).fetchone()
+        return {"scans": verdicts, "quarantined": quarantined, "cleaned_items": cleaned[0], "cleaned_bytes": cleaned[1]}
+
     def autorun_rows(self) -> list[sqlite3.Row]:
         with self._lock:
             return self._conn.execute("SELECT * FROM autoruns").fetchall()

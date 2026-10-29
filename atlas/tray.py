@@ -108,6 +108,7 @@ class SystemMonitor:
         self.on_finding = on_finding
         self.paused = False
         self.needs_look = 0
+        self.score = None
         self._wake = threading.Event()
         self._stop = threading.Event()
 
@@ -129,6 +130,20 @@ class SystemMonitor:
         self._stop.set()
         self._wake.set()
 
+    def _score_and_report(self, findings) -> None:
+        from atlas import report, score
+
+        self.score = score.health_score(findings)
+        score.record(self.store, self.score)
+        if not self.scanner.settings.weekly_report or not report.due(self.store):
+            return
+        weekly = report.build(self.store, self.score)
+        path = report.save(weekly, config.data_dir() / "reports")
+        report.mark_sent(self.store)
+        log.info("Weekly report: %s (%s)", weekly.summary, path)
+        if self.scanner.settings.notifications:
+            toast("Your weekly Atlas report", weekly.summary, link=path.as_uri(), link_label="Open the report")
+
     def check(self) -> None:
         from atlas.hunt import check_hunt
         from atlas.protection import check_system
@@ -144,6 +159,10 @@ class SystemMonitor:
             log.exception("Threat hunt failed")
         warnings = [f for f in findings if f.needs_look and f.key]
         self.needs_look = len(warnings)
+        try:
+            self._score_and_report(findings)
+        except Exception:
+            log.exception("Health score or weekly report failed")
         first_run = not self.store.has_seen_findings()
         fresh = set(self.store.new_findings(["system:checked"] + [f.key for f in warnings]))
         if first_run:
@@ -203,6 +222,8 @@ class AtlasTray:
             item(lambda _: self._status(), None, enabled=False),
             item(lambda _: f"Alert: {self.alert}", None, enabled=False, visible=lambda _: self.alert is not None),
             item("Clear alert", self._clear_alert, visible=lambda _: self.alert is not None),
+            item(lambda _: f"Health score: {self.system.score.text}", lambda: launch_gui(),
+                 visible=lambda _: self.system.score is not None),
             item(lambda _: f"Protection and threat hunt: {self.system.needs_look} thing(s) need a look", lambda: launch_gui(),
                  visible=lambda _: self.system.needs_look > 0),
             item(lambda _: f"Update to Project Atlas {self.update_available}", self._update,

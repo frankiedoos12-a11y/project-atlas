@@ -22,7 +22,7 @@ from pathlib import Path
 
 from atlas import config
 from atlas.browsers import SETTINGS_PAGES
-from atlas import defender, health, softwareupdates
+from atlas import defender, health, remoteaccess, softwareupdates
 from atlas.defender import check_defender
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.hijack import HOSTS, INTERNET_SETTINGS, check_hijacks
@@ -37,9 +37,12 @@ def check_system(scanner=None) -> list[Finding]:
     """Every system check, worst first. `scanner` (optional) lets sites and addresses be looked up."""
     lookup = scanner.lookup if scanner is not None and scanner.vt is not None else None
     threshold = scanner.settings.malicious_threshold if scanner is not None else 3
+    settings = config.Settings.load()  # fresh: "It's mine" may have changed the trusted tools since the tray started
     found = check_defender() + check_hijacks(lookup, threshold)
     for part in (lambda: softwareupdates.check_updates(scanner.store if scanner is not None else None),
-                 health.check_disks):
+                 health.check_disks,
+                 lambda: remoteaccess.check_remote_access(settings.trusted_remote_tools,
+                                                          [Path(f) for f in settings.watch_folders])):
         try:
             found += part()
         except Exception as exc:  # one broken check mustn't hide the others
@@ -65,6 +68,13 @@ def describe_fix(f: Finding) -> str:
                          "the setting yourself again? A backup is saved first. Restart the browser afterwards.",
         "edit-hosts": "Open the hosts file in Notepad as administrator? Windows will ask for permission. Delete the "
                       "lines Atlas pointed out, then save.",
+        "winget-upgrade-all": f"Update {len(f.data.get('ids', []))} programs? winget opens in a window and updates "
+                              "them one after another, so you can watch. Close them first.",
+        "end-remote": f"End {f.data.get('tool')} now? Anyone connected through it is cut off. If a stranger was "
+                      "connected, also change the passwords of anything you logged in to while they were.",
+        "trust-remote": f"Mark {f.data.get('tool')} as yours? Atlas then stops warning about it, including when it "
+                        "starts. Only do this if you or someone you trust (family, your IT person) use it.",
+        "untrust-remote": f"Warn about {f.data.get('tool')} again?",
         "winget-upgrade": f"Update {f.data.get('name')}? winget opens in a window so you can watch. Close the program "
                           "first. If winget asks you to accept its source agreement, that's your call.",
         "defender-harden": "Turn on Defender's extra attack protection? Windows asks for administrator permission, then "
@@ -95,6 +105,26 @@ def apply_fix(f: Finding) -> str:
         subprocess.Popen(softwareupdates.upgrade_command(f.data["id"]), creationflags=subprocess.CREATE_NEW_CONSOLE)
         softwareupdates.ask_again()
         return "winget is updating it in its own window. Press Check now when it's done."
+    if f.fix == "winget-upgrade-all":
+        subprocess.Popen(softwareupdates.upgrade_all_command(f.data["ids"]),
+                         creationflags=subprocess.CREATE_NEW_CONSOLE)
+        softwareupdates.ask_again()
+        return "winget is updating them in its own window. Press Check now when it's done."
+    if f.fix == "end-remote":
+        from atlas.processes import end_processes
+
+        problems = end_processes(set(f.data["pids"]))
+        log.warning("Ended remote-access program %s (%s)", f.data["tool"], problems or "ok")
+        ended = "\n".join(problems) if problems else f"{f.data['tool']} has been ended."
+        return ended + "\n\nIf it starts again by itself, uninstall it in the Installed tab."
+    if f.fix in ("trust-remote", "untrust-remote"):
+        settings = config.Settings.load()
+        trusted = [t for t in settings.trusted_remote_tools if t.lower() != f.data["tool"].lower()]
+        if f.fix == "trust-remote":
+            trusted.append(f.data["tool"])
+        settings.trusted_remote_tools = trusted
+        settings.save()
+        return "Saved. Press Check now to see the change."
     if f.fix in ("defender-harden", "defender-undo"):
         script = defender.HARDEN_SCRIPT if f.fix == "defender-harden" else defender.UNDO_SCRIPT
         _run_as_admin("powershell.exe", f'-NoProfile -Command "{script}"')
@@ -104,6 +134,14 @@ def apply_fix(f: Finding) -> str:
         _run_as_admin("notepad.exe", str(HOSTS), show=1)
         return ""
     raise ValueError(f"Nothing to fix for {f.title}")
+
+
+def start_defender_scan(offline: bool) -> None:
+    """Defender's full scan, or its offline scan (restarts the PC). Windows asks for administrator permission."""
+    from atlas.fullscan import DEFENDER_FULL, DEFENDER_OFFLINE
+
+    _run_as_admin("powershell.exe", f'-NoProfile -Command "{DEFENDER_OFFLINE if offline else DEFENDER_FULL}"')
+    log.info("Asked Windows to start Defender's %s scan", "offline" if offline else "full")
 
 
 def _run_as_admin(program: str, args: str, show: int = 0) -> None:

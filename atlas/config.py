@@ -140,6 +140,12 @@ class Settings:
     space_scan_folders: list[str] = field(default_factory=lambda: [str(Path.home())])
     big_file_min_mb: int = 500
     duplicate_min_mb: int = 10
+    # Remote-access programs you use on purpose (e.g. ["TeamViewer"]): Atlas doesn't warn about these.
+    trusted_remote_tools: list[str] = field(default_factory=list)
+    # A weekly report (health score, what changed, what Atlas did), written by the tray once a week.
+    weekly_report: bool = True
+    # Full scan: at most this many new VirusTotal lookups per run (a free key allows 500 a day, 4 a minute).
+    full_scan_lookups: int = 200
 
     @classmethod
     def load(cls) -> Settings:

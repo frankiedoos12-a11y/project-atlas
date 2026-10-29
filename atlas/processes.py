@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from atlas.vt_client import VTError
 log = logging.getLogger(__name__)
 
 WORKERS = 6
+REMOTE_QUIET = 30 * 60  # a remote-access tool that keeps restarting gets one pop-up per half hour
 
 
 @dataclass
@@ -223,6 +225,7 @@ class NewProgramWatcher:
         self._known_pids: set[int] = set()
         self._seen_files: dict[str, tuple[int, float]] = {}  # path -> (size, mtime) when last checked
         self._told: set[str] = set()
+        self._remote_told: dict[str, float] = {}  # remote-access tool -> when Atlas last spoke up about it
         self._stop = threading.Event()
 
     def stop(self) -> None:
@@ -249,6 +252,10 @@ class NewProgramWatcher:
             self._check_command_lines(new)
         except Exception:  # the VirusTotal check below must still run
             log.exception("Command-line check failed")
+        try:
+            self._check_remote_access(new)
+        except Exception:
+            log.exception("Remote-access check failed")
         if self.scanner.vt is None:
             return
         fresh: dict[str, RunningFile] = {}
@@ -284,6 +291,30 @@ class NewProgramWatcher:
             self.on_finding(f"Atlas: {f.verdict.value} program just started",
                             f"{f.path.name}\n{r.threat_text or r.reasons[0]}\nSee Running now to end it.", link)
 
+
+    def _check_remote_access(self, pids: set[int]) -> None:
+        """AnyDesk, TeamViewer, Quick Assist and co. the moment they start: the start of most tech-support scams."""
+        import psutil
+
+        from atlas import config, remoteaccess
+
+        started = {}
+        for pid in pids:
+            try:
+                tool = remoteaccess.match_file(psutil.Process(pid).name())
+            except (psutil.Error, OSError):
+                continue
+            if tool and time.monotonic() - self._remote_told.get(tool.name, -REMOTE_QUIET) >= REMOTE_QUIET:
+                started[tool.name] = tool
+        if not started:
+            return
+        trusted = config.Settings.load().trusted_remote_tools  # read now: "It's mine" takes effect at once
+        for name, tool in started.items():
+            self._remote_told[name] = time.monotonic()
+            if remoteaccess.is_trusted(tool, trusted):
+                continue
+            log.warning("Remote-access program started: %s", name)
+            self.on_finding(*remoteaccess.started_alert(name), None)
 
     def _check_command_lines(self, pids: set[int]) -> None:
         """Suspicious command lines (encoded PowerShell, Word starting a shell...) the moment they start."""

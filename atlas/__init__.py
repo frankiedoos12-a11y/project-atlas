@@ -1,4 +1,4 @@
 """Project Atlas: a VirusTotal-powered download guard for Windows."""
 
-__version__ = "0.9.1"
+__version__ = "0.10.0"
 APP_NAME = "ProjectAtlas"

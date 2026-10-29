@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import subprocess
 import sys
@@ -21,12 +22,12 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
 from atlas import (__version__, browsers, config, deepcheck, defender, gti, hunt, installed, network, processes,
-                   protection, pwned, space, updates)
+                   protection, pwned, score, space, updates)
 from atlas.app import build_scanner, guard_running, launch_tray, vt_usage_text
 from atlas.autoruns import MICROSOFT_SIGNERS, assess_all, can_switch, enumerate_all, set_enabled
 from atlas.cleanup import HOW_LABELS, clean, human_size, running_programs, scan_all
 from atlas.links import check_link
-from atlas.quarantine import quarantine_dir, restore_file
+from atlas.quarantine import quarantine_dir, quarantine_file, restore_file
 from atlas.scanner import Verdict, threat_lines
 from atlas.vt_client import VTClient
 
@@ -197,10 +198,12 @@ class AtlasWindow:
         self.tabs.add(self._build_installed_tab(), text="  Installed  ")
         self.tabs.add(self._build_protection_tab(), text="  Protection  ")
         self.tabs.add(self._build_hunt_tab(), text="  Threat hunt  ")
+        self.tabs.add(self._build_fullscan_tab(), text="  Full scan  ")
         self.tabs.add(self._build_activity_tab(), text="  Activity  ")
         self.tabs.add(self._build_cleanup_tab(), text="  Cleanup  ")
         self.tabs.add(self._build_space_tab(), text="  Disk space  ")
         self.tabs.add(self._build_browsers_tab(), text="  Browsers  ")
+        self.tabs.add(self._build_scam_tab(), text="  Scam check  ")
         self.tabs.add(self._build_quarantine_tab(), text="  Quarantine  ")
         root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -722,6 +725,9 @@ class AtlasWindow:
             notes.append("Installers and app data folders go to the Recycle Bin, so you can restore them.")
         if any(i.how == "registry" for _, i in chosen):
             notes.append("Startup entries are backed up to a .reg file first.")
+        if any(i.how == "files" for _, i in chosen):
+            notes.append("History, cookies and the recent files list are deleted for good. Clearing cookies signs "
+                         "you out of websites.")
         if any(i.how == "empty-bin" for _, i in chosen):
             notes.append("The Recycle Bin is emptied for good. Those files can't be restored afterwards.")
         if not messagebox.askyesno(WINDOW_TITLE, "Clean these?\n\n" + "\n".join(lines) + "\n\n" + "\n".join(notes)):
@@ -1566,12 +1572,14 @@ class AtlasWindow:
         bar.pack(fill="x")
         self.protection_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(950 * self.scale),
                                             text="Is Defender on and untouched, are your programs and Windows up "
-                                                 "to date, are your drives healthy, and has anything changed your "
-                                                 "browser, proxy, hosts file or DNS? Click Check now.")
+                                                 "to date, are your drives healthy, is a remote-access program "
+                                                 "running, and has anything changed your browser, proxy, hosts file "
+                                                 "or DNS? Click Check now.")
         self.protection_summary.pack(side="left", fill="x", expand=True)
         self.protection_button = ttk.Button(bar, text="Check now", command=self.check_protection)
         self.protection_button.pack(side="right")
         ttk.Button(bar, text="Check a password...", command=self._check_password).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text="Weekly report", command=self._weekly_report).pack(side="right", padx=(0, 6))
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
         self.protection_table = Table(panes, [("verdict", "Status", 120), ("area", "Area", 200),
@@ -1609,8 +1617,10 @@ class AtlasWindow:
             self.protection_table.replace([(iid, (label.get(f.level, f.level), f.area, f.title), (f.level,))
                                            for iid, f in self.protection_findings.items()])
             look = sum(1 for f in findings if f.needs_look)
-            self.protection_summary.configure(text=f"{len(findings)} checks: {look} need a look" if look
-                                              else f"{len(findings)} checks: nothing needs a look")
+            health = score.health_score(findings)
+            score.record(self.store, health)
+            self.protection_summary.configure(text=f"Health score {health.text}  ·  {len(findings)} checks: " +
+                                              (f"{look} need a look" if look else "nothing needs a look"))
             self.store.new_findings([f.key for f in findings if f.needs_look and f.key])  # tray won't repeat these
 
         self.in_background(lambda: protection.check_system(self.scanner), done)
@@ -1658,6 +1668,214 @@ class AtlasWindow:
                 (messagebox.showwarning if count else messagebox.showinfo)(WINDOW_TITLE, pwned.verdict(count))
 
         self.in_background(lambda: pwned.times_leaked(password), done)
+
+    # --- Full scan ---------------------------------------------------------------
+
+    def _build_fullscan_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.fullscan_summary = ttk.Label(
+            bar, style="Summary.TLabel", wraplength=int(760 * self.scale),
+            text="Checks every program file on your drives with VirusTotal, riskiest places first, at low priority so "
+                 f"the PC stays quick. It uses up to {self.settings.full_scan_lookups} new lookups a run (a free key "
+                 "does 4 a minute, so this takes a while) and carries on where it stopped next time. Only looks.")
+        self.fullscan_summary.pack(side="left", fill="x", expand=True)
+        self.fullscan_button = ttk.Button(bar, text="Start full scan", command=self.start_fullscan)
+        self.fullscan_button.pack(side="right")
+        ttk.Button(bar, text="Defender offline scan...", command=lambda: self._defender_scan(offline=True)
+                   ).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text="Defender full scan...", command=lambda: self._defender_scan(offline=False)
+                   ).pack(side="right", padx=(0, 6))
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+        self.fullscan_table = Table(panes, [("verdict", "Verdict", 100), ("name", "File", 240),
+                                            ("path", "Folder", 520), ("details", "Details", 360)],
+                                    self._show_fullscan_row, self.scale)
+        panes.add(self.fullscan_table, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.fullscan_location = ttk.Button(buttons, text="Open file location", state="disabled",
+                                            command=lambda: self._fullscan_path() and
+                                            open_in_explorer(self._fullscan_path()))
+        self.fullscan_location.pack(side="left")
+        self.fullscan_quarantine = ttk.Button(buttons, text="Quarantine...", state="disabled",
+                                              command=self._quarantine_fullscan)
+        self.fullscan_quarantine.pack(side="left", padx=(6, 0))
+        self.fullscan_defender = ttk.Button(buttons, text="Ask Defender", state="disabled",
+                                            command=lambda: self._ask_defender(self._fullscan_path()))
+        self.fullscan_defender.pack(side="left", padx=(6, 0))
+        self.fullscan_vt = ttk.Button(buttons, text="View on VirusTotal", state="disabled",
+                                      command=lambda: self._fullscan_link and webbrowser.open(self._fullscan_link))
+        self.fullscan_vt.pack(side="right")
+        self.fullscan_detail = DetailBox(lower)
+        self.fullscan_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=1)
+        self.fullscan_detail.show([("", "Files Atlas flags appear here. Unknown means VirusTotal has never seen it and "
+                                        "it isn't validly signed: often harmless (your own tools, games), but worth a "
+                                        "look if you don't recognise it.", None)])
+        self.fullscan_files: dict = {}
+        self._fullscan_link: str | None = None
+        self._fullscan_cancel: threading.Event | None = None
+        return tab
+
+    def start_fullscan(self) -> None:
+        if self._fullscan_cancel is not None:  # running: this is the Stop button
+            self._fullscan_cancel.set()
+            self.fullscan_button.configure(state="disabled", text="Stopping...")
+            return
+        from atlas import fullscan
+
+        cancel = self._fullscan_cancel = threading.Event()
+        self.fullscan_button.configure(text="Stop")
+
+        def progress(text: str) -> None:
+            self._ui_queue.put(lambda: self.fullscan_summary.configure(text=text))
+
+        def done(report) -> None:
+            self._fullscan_cancel = None
+            self.fullscan_button.configure(state="normal", text="Start full scan")
+            if report is None:
+                return
+            self.fullscan_files = {str(i): f for i, f in enumerate(report.files)}
+            self.fullscan_table.replace([(iid, (f.verdict.value.upper(), f.path.name, str(f.path.parent),
+                                                f.result.reasons[0] if f.result.reasons else ""), (f.verdict.value,))
+                                         for iid, f in self.fullscan_files.items()])
+            self.fullscan_summary.configure(text=fullscan.summary(report))
+
+        self.in_background(lambda: fullscan.full_scan(self.scanner, self.settings.full_scan_lookups, progress=progress,
+                                                      cancel=cancel), done)
+
+    def _fullscan_selected(self):
+        return self.fullscan_files.get(self.fullscan_table.selection() or "")
+
+    def _fullscan_path(self) -> Path | None:
+        item = self._fullscan_selected()
+        return item.path if item else None
+
+    def _show_fullscan_row(self, iid: str) -> None:
+        item = self._fullscan_selected()
+        if item is None:
+            return
+        r = item.result
+        v = r.verdict.value
+        lines = [("Verdict", v.upper(), v), ("File", str(item.path), None)]
+        if r.signer_text:
+            lines.append(("Publisher", r.signer_text, None))
+        lines += [("Why", reason, None) for reason in r.reasons] + threat_lines(r)
+        if r.sha256:
+            lines.append(("SHA-256", r.sha256, None))
+        self.fullscan_detail.show(lines)
+        self._fullscan_link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+        for button in (self.fullscan_location, self.fullscan_quarantine, self.fullscan_defender):
+            button.configure(state="normal")
+        self.fullscan_vt.configure(state="normal" if self._fullscan_link else "disabled")
+
+    def _quarantine_fullscan(self) -> None:
+        item = self._fullscan_selected()
+        if item is None or not item.result.sha256:
+            return
+        if not messagebox.askyesno(WINDOW_TITLE, f"Move {item.path.name} to quarantine?\n\n{item.path}\n\nIt's "
+                                                 "moved somewhere it can't run. You can put it back from the "
+                                                 "Quarantine tab. If a program needs it, that program may stop "
+                                                 "working until you do.", icon="warning"):
+            return
+        try:
+            quarantine_file(item.path, item.result.sha256, f"Full scan: {item.verdict.value}", self.store,
+                            config.data_dir())
+        except OSError as exc:
+            messagebox.showerror(WINDOW_TITLE, f"Couldn't move it (is it running? End it first):\n\n{exc}")
+            return
+        iid = self.fullscan_table.selection()
+        self.fullscan_files.pop(iid, None)
+        self.fullscan_table.tree.delete(iid)
+        messagebox.showinfo(WINDOW_TITLE, f"{item.path.name} is in quarantine.")
+
+    def _defender_scan(self, offline: bool) -> None:
+        if offline:
+            question = ("Start Microsoft Defender's offline scan?\n\nWindows asks for administrator permission, then "
+                        "RESTARTS the PC within a minute and scans for about 15 minutes before Windows starts, where "
+                        "hidden malware can't fight back. Save your work and close programs first.")
+        else:
+            question = ("Start Microsoft Defender's full scan?\n\nWindows asks for administrator permission. Defender "
+                        "then scans the whole PC in the background (often an hour or more) and shows what it finds "
+                        "in Windows Security.")
+        if not messagebox.askyesno(WINDOW_TITLE, question, icon="warning" if offline else "question"):
+            return
+        try:
+            protection.start_defender_scan(offline)
+        except OSError as exc:
+            messagebox.showerror(WINDOW_TITLE, str(exc))
+
+    # --- Scam check ----------------------------------------------------------------
+
+    def _build_scam_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self.tabs, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
+                  text="Got an email, text or pop-up you're not sure about? Paste it below and click Check. Atlas "
+                       "looks for the usual scam tricks and checks its links with VirusTotal. Nothing else leaves "
+                       "this PC.").pack(side="left", fill="x", expand=True)
+        ttk.Button(bar, text="Check", command=self.check_scam).pack(side="right")
+        ttk.Button(bar, text="Clear", command=lambda: (self.scam_text.delete("1.0", "end"),
+                                                       self.scam_detail.show([]))).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text="Paste", command=self._paste_scam).pack(side="right", padx=(0, 6))
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+        self.scam_text = tk.Text(panes, height=8, wrap="word", font=("Segoe UI", 10), padx=10, pady=8, undo=True)
+        panes.add(self.scam_text, weight=1)
+        self.scam_detail = DetailBox(panes)
+        panes.add(self.scam_detail, weight=2)
+        return tab
+
+    def _paste_scam(self) -> None:
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            return
+        self.scam_text.delete("1.0", "end")
+        self.scam_text.insert("1.0", text)
+        self.check_scam()
+
+    def check_scam(self) -> None:
+        from atlas import scam
+
+        text = self.scam_text.get("1.0", "end").strip()
+        if not text:
+            return
+        self.scam_detail.show([("", "Checking...", None)])
+
+        def done(result) -> None:
+            if result is None:
+                return
+            tag = {scam.SCAM: "malicious", scam.CAREFUL: "suspicious"}.get(result.verdict, "clean")
+            lines = [("Verdict", result.verdict.upper(), tag), ("", scam.summary(result), None)]
+            for r in result.reasons:
+                lines += [(r.title, r.why, None), ("", f"    \u201c{r.quote}\u201d", None)]
+            for link in result.links:
+                lines.append(("Link", f"{link.url}: {link.verdict.value}" +
+                              (f" ({link.reasons[0]})" if link.reasons else ""), link.verdict.value))
+            if result.skipped_links:
+                lines.append(("", f"{result.skipped_links} more links weren't checked.", None))
+            self.scam_detail.show(lines)
+
+        self.in_background(lambda: scam.check_message(text, self.scanner), done)
+
+    def _weekly_report(self) -> None:
+        from atlas import report, score
+
+        findings = list(self.protection_findings.values())
+        if not findings:
+            messagebox.showinfo(WINDOW_TITLE, "Click Check now first, so the report has today's results.")
+            return
+
+        def work():
+            weekly = report.build(self.store, score.health_score(findings))
+            return report.save(weekly, config.data_dir() / "reports")
+
+        self.in_background(work, lambda path: path and os.startfile(path))
 
     def _build_hunt_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self.tabs, padding=10)

@@ -39,7 +39,8 @@ def toast_body(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
-def toast(title: str, body: str, link: str | None = None, loud: bool = False) -> None:
+def toast(title: str, body: str, link: str | None = None, loud: bool = False,
+          link_label: str = "View on VirusTotal") -> None:
     try:
         from winotify import Notification, audio
 
@@ -47,7 +48,7 @@ def toast(title: str, body: str, link: str | None = None, loud: bool = False) ->
         if loud:
             note.set_audio(audio.Default, loop=False)
         if link:
-            note.add_actions(label="View on VirusTotal", launch=link)
+            note.add_actions(label=link_label, launch=link)
         note.show()
     except Exception:  # winotify missing or toast failed: fall back to the log
         log.warning("%s | %s", title, body.replace("\n", " | "))

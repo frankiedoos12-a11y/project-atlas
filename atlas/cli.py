@@ -7,7 +7,10 @@
     atlas scan FILE...         scan files right now
     atlas autoruns             check everything set to start automatically
     atlas running / network    check running programs / internet connections
-    atlas protection           check Defender, browser start/search pages, proxy, hosts file, DNS
+    atlas protection           check Defender, updates, remote access, browsers, proxy, hosts file, DNS
+    atlas scam-check [FILE]    is this message a scam? (paste it, or give a text file)
+    atlas full-scan            check every program file on the PC, a day's worth of lookups at a time
+    atlas report               write this week's report now and open it
     atlas installed            check installed programs for adware and unwanted software
     atlas second-opinion FILE  ask Microsoft Defender to scan a file too
     atlas hunt [--admin]       command lines, certificates, drivers, open ports, user folders, threat intel
@@ -29,6 +32,7 @@ import argparse
 import getpass
 import json
 import logging
+import os
 import sys
 import threading
 from dataclasses import asdict
@@ -393,8 +397,74 @@ def cmd_protection(args) -> int:
     flagged = [f for f in findings if f.needs_look]
     print(f"\n{len(findings)} checks: {len(flagged)} need a look."
           + ("" if args.all else " Add --all to list everything."))
+    from atlas import score
+
+    health = score.health_score(findings)
+    score.record(store, health)
+    print(f"Health score: {health.text}")
     store.close()
     return 2 if flagged else 0
+
+
+def cmd_scam_check(args) -> int:
+    """Is this message a scam? Rules, plus VirusTotal for its links; nothing else leaves the PC."""
+    from atlas import scam
+
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8", errors="replace")
+    else:
+        print("Paste the message, then press Enter, Ctrl+Z and Enter:")
+        text = sys.stdin.read()
+    if not text.strip():
+        return 1
+    scanner, store = build_scanner(config.Settings.load())
+    result = scam.check_message(text, scanner)
+    store.close()
+    print(f"\n{result.verdict.upper()}\n{scam.summary(result)}\n")
+    for r in result.reasons:
+        print(f"  * {r.title}: {r.why}\n      \"{r.quote}\"")
+    for link in result.links:
+        print(f"  Link {link.url}: {link.verdict.value}" + (f" ({link.reasons[0]})" if link.reasons else ""))
+    if result.skipped_links:
+        print(f"  ({result.skipped_links} more links weren't checked)")
+    return {scam.SCAM: 2, scam.CAREFUL: 1}.get(result.verdict, 0)
+
+
+def cmd_full_scan(args) -> int:
+    """Every program file on the PC, riskiest first, until the lookups set aside for it are spent. Only looks."""
+    from atlas import fullscan
+
+    settings = config.Settings.load()
+    scanner, store = build_scanner(settings)
+    report = fullscan.full_scan(scanner, args.budget or settings.full_scan_lookups,
+                                progress=lambda text: print(f"  {text}", flush=True))
+    store.close()
+    for f in report.files:
+        print(f"[{f.verdict.value.upper():10}] {f.path}")
+        for reason in f.result.reasons[:2]:
+            print(f"               - {reason}")
+    print("\n" + fullscan.summary(report))
+    return 2 if any(f.verdict in (Verdict.MALICIOUS, Verdict.SUSPICIOUS) for f in report.files) else 0
+
+
+def cmd_report(args) -> int:
+    """This week's report, written now: health score, what changed, what Atlas did."""
+    from atlas import report, score
+    from atlas.hunt import check_hunt
+    from atlas.protection import check_system
+
+    scanner, store = build_scanner(config.Settings.load())
+    print("Running the Protection checks and threat hunt...")
+    findings = check_system(scanner) + check_hunt(scanner)
+    health = score.health_score(findings)
+    score.record(store, health)
+    weekly = report.build(store, health)
+    path = report.save(weekly, config.data_dir() / "reports")
+    store.close()
+    print(f"{weekly.summary}\nSaved: {path}")
+    if not args.no_open:
+        os.startfile(path)
+    return 0
 
 
 def cmd_password_check(args) -> int:
@@ -725,6 +795,18 @@ def main(argv: list[str] | None = None) -> int:
                             "and DNS (read-only)")
     p.add_argument("--all", action="store_true", help="also list what's fine")
     p.set_defaults(func=cmd_protection)
+
+    p = sub.add_parser("scam-check", help="is this message a scam? (rules, plus VirusTotal for its links)")
+    p.add_argument("file", nargs="?", help="a text file holding the message (default: paste it)")
+    p.set_defaults(func=cmd_scam_check)
+
+    p = sub.add_parser("full-scan", help="check every program file on the PC with VirusTotal, riskiest first")
+    p.add_argument("--budget", type=int, help="new VirusTotal lookups to spend (default: full_scan_lookups)")
+    p.set_defaults(func=cmd_full_scan)
+
+    p = sub.add_parser("report", help="write this week's report (health score, changes, activity) and open it")
+    p.add_argument("--no-open", action="store_true", help="don't open it")
+    p.set_defaults(func=cmd_report)
 
     sub.add_parser("password-check", help="check whether a password has appeared in a data leak"
                    ).set_defaults(func=cmd_password_check)
