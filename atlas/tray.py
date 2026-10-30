@@ -159,17 +159,18 @@ class SystemMonitor:
         except Exception:
             log.exception("Threat hunt failed")
         warnings = [f for f in findings if f.needs_look and f.key]
+        newcomers = [f for f in findings if f.key.startswith("homenet:new:")]  # announced once, like warnings
         self.needs_look = len(warnings)
         try:
             self._score_and_report(findings)
         except Exception:
             log.exception("Health score or weekly report failed")
         first_run = not self.store.has_seen_findings()
-        fresh = set(self.store.new_findings(["system:checked"] + [f.key for f in warnings]))
+        fresh = set(self.store.new_findings(["system:checked"] + [f.key for f in warnings + newcomers]))
         if first_run:
             log.info("First system check: %d thing(s) need a look", len(warnings))
             return
-        for f in warnings:
+        for f in warnings + newcomers:
             if f.key in fresh:
                 log.warning("New system finding: [%s] %s", f.area, f.title)
                 self.on_finding(f"Atlas: {f.area}", f"{f.title}\n{f.details[0] if f.details else ''}", f.vt_link)

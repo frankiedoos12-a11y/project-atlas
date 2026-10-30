@@ -51,6 +51,9 @@ def isolated_dirs(tmp_path, monkeypatch):
     from atlas import allowlist
 
     monkeypatch.setattr(allowlist, "shared_sites", lambda store=None: {})  # never download it in tests
+    from atlas import homenet
+
+    monkeypatch.setattr(homenet, "read_network", lambda: None)  # never look at the real home network in tests
 
 
 @pytest.fixture

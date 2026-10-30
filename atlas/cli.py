@@ -14,6 +14,7 @@
     atlas installed            check installed programs for adware and unwanted software
     atlas second-opinion FILE  ask Microsoft Defender to scan a file too
     atlas hunt [--admin]       command lines, certificates, drivers, open ports, user folders, threat intel
+    atlas home [--now]         your router, Wi-Fi and the devices on your home network
     atlas gti [sync]           Google Threat Intelligence reports on this PC
     atlas quota                VirusTotal lookups used today and this month
     atlas update [--now]       check GitHub for a newer version
@@ -521,6 +522,31 @@ def cmd_second_opinion(args) -> int:
     return worst
 
 
+def cmd_home(args) -> int:
+    """The router, the Wi-Fi and the devices on the home network. Look-only."""
+    from atlas import homenet
+
+    settings = config.Settings.load()
+    scanner, store = build_scanner(settings)
+    lookup = scanner.lookup if scanner.vt else None
+    check = homenet.check_home(store, lookup, settings.malicious_threshold, force=args.now)
+    store.close()
+    if args.json:
+        print(homenet.as_json(check))
+        return 0
+    print(homenet.summary(check) + "\n")
+    for d in check.devices:
+        print(f"  {d.label:<34} {d.maker[:28]:<28} {d.ip:<15} {d.mac}")
+    if check.devices:
+        print()
+    labels = {"warn": "[LOOK]   ", "note": "[NOTE]   ", "ok": "[OK]     "}
+    for f in check.findings:
+        print(f"{labels.get(f.level, '')} {f.area}: {f.title}")
+        for line in f.details:
+            print(f"           {line}")
+    return 2 if any(f.needs_look for f in check.findings) else 0
+
+
 def cmd_hunt(args) -> int:
     """Command lines, certificates, drivers, open ports, user-folder programs and threat intel. Read-only."""
     from atlas import deepcheck
@@ -825,6 +851,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--all", action="store_true", help="also list what's fine")
     p.add_argument("--admin", action="store_true", help="include the administrator-only checks (asks permission)")
     p.set_defaults(func=cmd_hunt)
+
+    p = sub.add_parser("home", help="your router, Wi-Fi and the devices on your home network (look-only)")
+    p.add_argument("--now", action="store_true", help="look again now instead of using today's answers")
+    p.add_argument("--json", action="store_true", help="print everything as JSON")
+    p.set_defaults(func=cmd_home)
 
     p = sub.add_parser("deep-check", help=argparse.SUPPRESS)
     p.add_argument("--collect", action="store_true")

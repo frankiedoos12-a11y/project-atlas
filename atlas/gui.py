@@ -260,8 +260,8 @@ class AtlasWindow:
         self.pages: dict[str, tk.Widget] = {"home": self._build_home(self.content)}
         self.tab_frames: dict[str, tuple[str, ttk.Frame]] = {}  # tab name -> (group, its frame)
         groups = [
-            ("protection", [("Checks", self._build_protection_tab), ("Full scan", self._build_fullscan_tab),
-                            ("Threat hunt", self._build_hunt_tab)]),
+            ("protection", [("Checks", self._build_protection_tab), ("Home network", self._build_home_network_tab),
+                            ("Full scan", self._build_fullscan_tab), ("Threat hunt", self._build_hunt_tab)]),
             ("pc", [("Startup items", self._build_startup_tab), ("Running now", self._build_running_tab),
                     ("Installed", self._build_installed_tab)]),
             ("online", [("Message and link check", self._build_scam_tab), ("Browsers", self._build_browsers_tab),
@@ -1906,6 +1906,119 @@ class AtlasWindow:
             return
         messagebox.showinfo(WINDOW_TITLE, "The uninstaller has started. When it's finished, click Check now to "
                                           "refresh the list.")
+
+    # --- Protection: the home network ------------------------------------------------------
+
+    def _build_home_network_tab(self, parent) -> ttk.Frame:
+        tab = ttk.Frame(parent, padding=10)
+        bar = ttk.Frame(tab)
+        bar.pack(fill="x")
+        self.home_summary = ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
+                                      text="Your router, your Wi-Fi and every device on your home network. Atlas "
+                                           "only looks; it never signs in to the router or probes the devices.")
+        self.home_summary.pack(side="left", fill="x", expand=True)
+        self.home_button = ttk.Button(bar, text="Check now", command=lambda: self.check_home_network(force=True))
+        self.home_button.pack(side="right")
+        self.home_confirm = ttk.Button(bar, text="This is my home network", command=self._confirm_home_network)
+        panes = ttk.PanedWindow(tab, orient="vertical")
+        panes.pack(fill="both", expand=True, pady=(8, 0))
+        self.home_table = Table(panes, [("device", "Device", 260), ("maker", "Maker", 220), ("ip", "Address", 120),
+                                        ("mac", "Hardware address", 160), ("first", "First seen", 130),
+                                        ("last", "Last seen", 130)], self._show_home_device, self.scale)
+        self.home_table.tree.tag_configure("new", foreground=VERDICT_COLORS["unknown"])
+        panes.add(self.home_table, weight=3)
+        lower = ttk.Frame(panes)
+        buttons = ttk.Frame(lower)
+        buttons.pack(side="bottom", fill="x", pady=(6, 0))
+        self.home_router = ttk.Button(buttons, text="Open the router's page", state="disabled",
+                                      command=lambda: self._home_check and webbrowser.open(
+                                          self._home_check.page.get("url") or
+                                          f"http://{self._home_check.network.gateway}/"))
+        self.home_router.pack(side="left")
+        self.home_detail = DetailBox(lower)
+        self.home_detail.pack(fill="both", expand=True)
+        panes.add(lower, weight=2)
+        self._home_check = None
+        self._home_loaded = False
+        parent.bind("<<NotebookTabChanged>>", lambda e: self._home_tab_shown(parent, tab), add="+")
+        return tab
+
+    def _home_tab_shown(self, book, tab) -> None:
+        if not self._home_loaded and book.select() == str(tab):
+            self._home_loaded = True
+            self.check_home_network(force=False)  # today's answers if Atlas already has them
+
+    def check_home_network(self, force: bool) -> None:
+        from atlas import homenet
+
+        self.home_button.configure(state="disabled")
+        self.home_summary.configure(text="Looking at your home network..." + (" (this takes about 15 seconds)"
+                                                                               if force else ""))
+        lookup = self.scanner.lookup if self.scanner.vt else None
+
+        def done(check) -> None:
+            self.home_button.configure(state="normal")
+            if check is None:
+                return
+            self._home_check = check
+            self.home_summary.configure(text=homenet.summary(check))
+            asking = any(f.key == "homenet:ask" for f in check.findings)
+            if asking:
+                self.home_confirm.pack(side="right", padx=(0, 6))
+            else:
+                self.home_confirm.pack_forget()
+            new = {f.key.removeprefix("homenet:new:") for f in check.findings if f.key.startswith("homenet:new:")}
+            self.home_table.replace([
+                (d.mac, (d.label, d.maker or "-", d.ip, d.mac, local_time(d.first_seen), local_time(d.last_seen)),
+                 ("new",) if d.mac in new else ()) for d in check.devices])
+            self.home_router.configure(state="normal" if check.network and not asking else "disabled")
+            self._show_home_findings()
+
+        self.in_background(lambda: homenet.check_home(self.store, lookup, self.scanner.settings.malicious_threshold,
+                                                      force=force), done)
+
+    def _show_home_findings(self) -> None:
+        check = self._home_check
+        if check is None:
+            return
+        lines = []
+        for f in check.findings:
+            level = {"warn": "suspicious", "ok": "clean"}.get(f.level)
+            lines.append((f.area, f.title, level))
+            lines += [("", d, None) for d in f.details]
+        self.home_detail.show(lines or [("", "Nothing to show.", None)])
+
+    def _show_home_device(self, iid: str) -> None:
+        check = self._home_check
+        d = next((d for d in check.devices if d.mac == iid), None) if check else None
+        if d is None:
+            return self._show_home_findings()
+        lines = [("Device", d.label, None), ("Maker", d.maker or "Unknown", None), ("Address", d.ip, None),
+                 ("Hardware address", d.mac, None), ("First seen", local_time(d.first_seen), None),
+                 ("Last seen", local_time(d.last_seen), None)]
+        if d.maker == "Private address":
+            lines.append(("Note", "Phones, tablets and newer laptops make up their hardware address for privacy, "
+                                  "so their maker can't be told. Its name in your router's app usually can.", None))
+        elif not d.role and not d.name:
+            lines.append(("Note", "To find out what it is, look for this hardware address in your router's app, "
+                                  "which lists connected devices.", None))
+        self.home_detail.show(lines)
+
+    def _confirm_home_network(self) -> None:
+        check = self._home_check
+        if check is None or check.network is None:
+            return
+        name = check.network.name or check.network.alias
+        if not messagebox.askyesno(WINDOW_TITLE, f"Is \"{name}\" your home network?\n\nAtlas will look at its router, "
+                                                 "Wi-Fi and connected devices once a day, without signing in to "
+                                                 "anything. Only say yes for a network that's yours."):
+            return
+        settings = config.Settings.load()
+        if check.network.id not in settings.home_networks:
+            settings.home_networks.append(check.network.id)
+            settings.save()
+        self.scanner.settings.home_networks = settings.home_networks
+        self.check_home_network(force=True)
 
     # --- Protection: Defender and hijacks ------------------------------------------------
 

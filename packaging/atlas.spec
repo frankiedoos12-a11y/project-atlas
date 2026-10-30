@@ -4,7 +4,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 
 hidden = collect_submodules("atlas") + collect_submodules("keyring.backends")
-datas = [("../extension", "extension")]
+datas = [("../extension", "extension"), ("../atlas/oui.txt.gz", "atlas")]
 icon = "build/atlas.ico"
 
 

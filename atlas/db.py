@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS file_hashes (
     mtime REAL NOT NULL,
     sha256 TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS home_devices (
+    network TEXT NOT NULL,
+    mac TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    maker TEXT,
+    name TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    initial INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (network, mac)
+);
 CREATE TABLE IF NOT EXISTS cleanup_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cleaned_at TEXT NOT NULL,
@@ -258,6 +269,31 @@ class Store:
             self._conn.executemany("INSERT OR IGNORE INTO seen_findings (key, first_seen) VALUES (?, ?)",
                                    [(k, now) for k in fresh])
         return fresh
+
+    # --- Home network devices -----------------------------------------------
+
+    def record_home_devices(self, network: str, devices: list) -> list:
+        """Remember the devices seen on a network (local times). The first time a network is seen, its devices
+        are marked `initial`, so they aren't announced as new. Returns every device remembered for it, with
+        first and last seen filled in: ones not seen right now are kept for a month."""
+        from atlas.homenet import Device
+
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._lock, self._conn:
+            known = self._conn.execute("SELECT 1 FROM home_devices WHERE network = ? LIMIT 1", (network,)).fetchone()
+            for d in devices:
+                self._conn.execute(
+                    "INSERT INTO home_devices (network, mac, ip, maker, name, first_seen, last_seen, initial)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(network, mac) DO UPDATE SET ip = excluded.ip,"
+                    " maker = excluded.maker, name = COALESCE(NULLIF(excluded.name, ''), name),"
+                    " last_seen = excluded.last_seen",
+                    (network, d.mac, d.ip, d.maker, d.name, now, now, 0 if known else 1))
+            month_ago = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
+            self._conn.execute("DELETE FROM home_devices WHERE network = ? AND last_seen < ?", (network, month_ago))
+            rows = self._conn.execute("SELECT * FROM home_devices WHERE network = ?", (network,)).fetchall()
+        roles = {d.mac: d.role for d in devices}
+        return [Device(r["mac"], r["ip"], r["maker"] or "", r["name"] or "", r["first_seen"], r["last_seen"],
+                       bool(r["initial"]), roles.get(r["mac"], "")) for r in rows]
 
     def has_seen_findings(self) -> bool:
         with self._lock:

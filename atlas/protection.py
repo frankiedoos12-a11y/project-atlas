@@ -22,7 +22,7 @@ from pathlib import Path
 
 from atlas import config
 from atlas.browsers import SETTINGS_PAGES
-from atlas import defender, health, remoteaccess, softwareupdates
+from atlas import defender, health, homenet, remoteaccess, softwareupdates
 from atlas.defender import check_defender
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.hijack import HOSTS, INTERNET_SETTINGS, check_hijacks
@@ -42,7 +42,9 @@ def check_system(scanner=None) -> list[Finding]:
     for part in (lambda: softwareupdates.check_updates(scanner.store if scanner is not None else None),
                  health.check_disks,
                  lambda: remoteaccess.check_remote_access(settings.trusted_remote_tools,
-                                                          [Path(f) for f in settings.watch_folders])):
+                                                          [Path(f) for f in settings.watch_folders]),
+                 lambda: homenet.home_findings(scanner.store if scanner is not None else None, lookup, threshold)
+                 if settings.check_home_network else []):
         try:
             found += part()
         except Exception as exc:  # one broken check mustn't hide the others

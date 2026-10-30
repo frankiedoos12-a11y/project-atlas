@@ -129,6 +129,10 @@ class Settings:
     # Check Defender, browser start pages and search, proxy, hosts file and DNS this often (0 = only when
     # asked), and alert when something new needs a look.
     system_check_minutes: int = 60
+    # With the system checks: the router, the Wi-Fi and the devices on your home network (Private networks only).
+    check_home_network: bool = True
+    # Networks you told Atlas are your home (by the router's hardware address), for ones Windows calls Public.
+    home_networks: list[str] = field(default_factory=list)
     # Look for a newer Project Atlas on GitHub once a day.
     check_for_updates: bool = True
     # With a Google Threat Intelligence key: download indicators from Google's Windows threat reports of

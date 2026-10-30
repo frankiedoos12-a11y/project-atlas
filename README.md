@@ -267,6 +267,28 @@ It needs no VirusTotal key, so it works even if Windows asks for a different adm
 
 The tray runs the threat hunt with the Protection checks every hour and alerts you to anything new. `atlas hunt` prints it (`--admin` adds the deep check).
 
+## 10. Home network: the router, the Wi-Fi and every device
+
+**Protection > Home network** lists every device on your home network: the router, this PC, TVs, phones, consoles and cameras. It also checks the things that protect all of them. Atlas only looks: it never signs in to the router, and it never port-scans the devices.
+
+- **Which networks:** only a network Windows calls *Private*, or one you confirmed with **This is my home network**. Windows 11 marks new networks *Public*, homes included, so Atlas asks first. It never looks at a café's or hotel's network.
+- **Devices:** each device shows its maker, address and when it was first and last seen. The tray tells you once when a new device joins. Phones and tablets use made-up hardware addresses, so they show as *Phone, tablet or laptop*; your router's app shows their names.
+- **Wi-Fi security:**
+  - No password, WEP, WPA or TKIP needs a look.
+  - WPA2 (AES) is fine.
+  - WPA3 is best.
+- **UPnP:**
+  - Atlas checks whether the router lets devices open doors to the internet by themselves.
+  - If it does, Atlas lists each door.
+  - A door to a camera, Remote Desktop, a router page or remote sign-in needs a look.
+- **DNS:**
+  - Atlas checks who answers your website lookups.
+  - An unfamiliar provider is worth knowing about.
+  - With a VirusTotal key, a flagged provider needs a look: someone may have changed the router's DNS setting.
+- **The router:** Atlas recognises the brand from its sign-in page. It then gives a checklist to confirm in the router's app: the admin password, automatic updates, WPS and remote management. Atlas can't see these without signing in.
+
+Finding the devices takes about 15 seconds once a day, by sending one tiny packet to each address on the network. The rest of the day Atlas reads what Windows already knows, which takes a few seconds an hour. `atlas home` prints it (`--now` looks again). To switch it off, set `check_home_network` to `false` in the settings.
+
 ## Updates and VirusTotal usage
 
 The window's header shows how many VirusTotal lookups Atlas has made today and this month (a free key allows 500 a day; answers Atlas already has don't count). `atlas quota` breaks it down.
@@ -350,6 +372,7 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas second-opinion FILE...` | Ask Microsoft Defender to scan files (report only) |
 | `atlas quota` | VirusTotal lookups Atlas made today and this month |
 | `atlas update` | Check for a newer version (`--now` to update an installed copy) |
+| `atlas home` | Your router, Wi-Fi and the devices on your home network (`--now` looks again, `--json` for scripts) |
 | `atlas hunt` | Command lines, certificates, drivers, open ports, user-folder programs and threat intel (`--admin` adds the deep check, `--all` lists what's fine too) |
 | `atlas gti` | Google Threat Intelligence reports on this PC (`atlas gti sync` downloads new ones) |
 | `atlas cleanup` | Report junk that can be removed (read-only; clean from the window) |
@@ -407,6 +430,8 @@ Don't run an installed copy and a clone at the same time. Only one copy's protec
 ## License
 
 Project Atlas is free software under the [GNU General Public License v3.0 or later](LICENSE). You can use, study, share and change it; if you share a changed version, you share its source under the same license.
+
+The device-maker list (`atlas/oui.txt.gz`) comes from Wireshark's [manuf file](https://www.wireshark.org/download/automated/data/manuf.gz) (GPL-2.0-or-later). Wireshark builds it from the IEEE registry.
 
 ## Roadmap
 
