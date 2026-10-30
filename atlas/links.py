@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from atlas import allowlist
 from atlas.scanner import Scanner, Verdict
 from atlas.sites import registered_domain, site_warnings
-from atlas.vt_client import Report, VTError
+from atlas.vt_client import Report, VTError, gui_link
 
 SHORTENERS = {"bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly", "rebrand.ly",
               "cutt.ly", "shorturl.at", "rb.gy", "t.ly", "tiny.cc", "s.id", "lnkd.in"}
@@ -64,6 +64,21 @@ class LinkCheck:
     @property
     def host(self) -> str:
         return urlparse(self.url).hostname or ""
+
+    @property
+    def vt_link(self) -> str | None:
+        """The link's VirusTotal page, or (when nothing was looked up, e.g. no API key) the site's page, to look
+        it up by hand. Only the site's name goes in that link: full links can hold sign-in tokens."""
+        for report in (self.url_report, self.domain_report):
+            if report is not None and report.found:
+                return report.gui_link
+        if self.url_report is None and self.domain_report is None and self.host:
+            try:
+                ipaddress.ip_address(self.host)
+                return gui_link("ip", self.host)
+            except ValueError:
+                return gui_link("domain", self.host)
+        return None
 
     def raise_to(self, verdict: Verdict, reason: str) -> None:
         self.reasons.append(reason)
@@ -174,7 +189,8 @@ def check_link(scanner: Scanner | None, text: str) -> LinkCheck:
     if check.verdict is Verdict.ERROR:
         return check
     if scanner is None or scanner.vt is None:
-        check.raise_to(Verdict.ERROR, "No VirusTotal API key configured; only the offline checks ran")
+        check.raise_to(Verdict.ERROR, "VirusTotal isn't connected, so only Atlas's own checks ran. Use View on "
+                                      "VirusTotal to look the site up")
         return check
     try:
         check.url_report = scanner.lookup("url", check.url)

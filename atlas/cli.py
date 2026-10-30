@@ -72,8 +72,8 @@ def _print_result(result: ScanResult) -> None:
         print(f"           - {reason}")
     for label, text, _ in threat_lines(result):
         print(f"           {label + ':':<10} {text}")
-    if result.file_report and result.file_report.found:
-        print(f"           {result.file_report.gui_link}")
+    if result.vt_link:
+        print(f"           {result.vt_link}")
     if result.action:
         print(f"           >> {result.action}")
 
@@ -99,7 +99,8 @@ def cmd_scan(args) -> int:
     settings = config.Settings.load()
     scanner, store = build_scanner(settings)
     if scanner.vt is None:
-        print("Note: no API key set, so only local checks will run. Run `atlas set-key` first.\n")
+        print("Note: VirusTotal isn't connected (no API key), so Microsoft Defender checks programs instead.\n"
+              "      Each result links to its VirusTotal page to look it up yourself.\n")
     worst = Verdict.CLEAN
     for raw in args.files:
         path = Path(raw)
@@ -199,8 +200,8 @@ def cmd_autoruns(args) -> int:
             for reason in result.reasons:
                 if reason != result.signer_text:
                     print(f"           - {reason}")
-            if result.file_report and result.file_report.found:
-                print(f"           {result.file_report.gui_link}")
+            if result.vt_link:
+                print(f"           {result.vt_link}")
             print(f"           where:  {entry.location}  (first seen {first_seen.get(entry.key, '?')[:10]})")
         print()
 

@@ -167,7 +167,7 @@ def judge_site(host: str, scanner) -> LinkCheck:
         if verdict is not Verdict.CLEAN:
             check.raise_to(verdict, reason)
     if scanner is None or scanner.vt is None:
-        check.raise_to(Verdict.ERROR, "No VirusTotal API key configured")
+        check.raise_to(Verdict.ERROR, "VirusTotal isn't connected. Use View on VirusTotal to look the site up")
         return check
     try:
         check.domain_report = scanner.lookup("domain", host)
@@ -193,7 +193,7 @@ def judge_sites(sites: list[NotificationSite], scanner) -> None:
         check = checks[s.host]
         s.verdict = check.verdict.value
         s.reasons = list(check.reasons)
-        s.vt_link = check.domain_report.gui_link if check.domain_report and check.domain_report.found else None
+        s.vt_link = check.vt_link
 
 
 def block_notifications(site: NotificationSite, backup_dir: Path, running: set[str]) -> Path:

@@ -271,6 +271,13 @@ The tray runs the threat hunt with the Protection checks every hour and alerts y
 
 The window's header shows how many VirusTotal lookups Atlas has made today and this month (a free key allows 500 a day; answers Atlas already has don't count). `atlas quota` breaks it down.
 
+**Without a VirusTotal key**, Atlas still works:
+- **Programs:** Microsoft Defender checks every program it scans. Defender comes with Windows and needs no key or administrator rights. Defender is the PC's antivirus; Atlas adds a second opinion and never replaces it.
+- **Unsigned downloads:** a program downloaded from the internet that isn't signed is marked *unknown*. Without VirusTotal, Atlas can't tell whether other people have run it safely.
+- **View on VirusTotal:** it opens the file's or site's VirusTotal page in your browser, so you can look it up yourself. Only the site's name is sent, never the full link, because links can hold sign-in tokens.
+
+The header shows which mode Atlas is in.
+
 Once a day the tray checks GitHub for a newer version (`check_for_updates`). When there is one, it tells you, and the tray menu and the window's **Update now** button update Atlas: the app downloads the newest release's setup and runs it, and a copy set up by `install.ps1` re-runs that in a window you can watch. Settings, history and your key are kept. `atlas update` checks from the console, and `atlas update --now` updates.
 
 ## The Atlas window

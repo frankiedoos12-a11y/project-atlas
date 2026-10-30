@@ -80,7 +80,7 @@ class RunningMonitor:
             key = f"file:{f.result.sha256}"
             if f.verdict in bad and key not in self._told:
                 self._told.add(key)
-                link = f.result.file_report.gui_link if f.result.file_report and f.result.file_report.found else None
+                link = f.result.vt_link
                 what = f.result.threat_text or f.result.reasons[0]
                 log.warning("Running %s %s is %s: %s", f.kind, f.path, f.verdict.value, "; ".join(f.result.reasons))
                 self.on_finding(f"Atlas: {f.verdict.value} program running", f"{f.path.name}\n{what}", link)
@@ -253,7 +253,7 @@ class AtlasTray:
         if self.guard.paused:
             return "Protection paused"
         if self.scanner.vt is None:
-            return "No VirusTotal key: run atlas set-key"
+            return f"Protecting {len(self.guard.folders)} folders · VirusTotal not connected"
         text = f"Protecting {len(self.guard.folders)} folders"
         if self.monitor and self.monitor.last_check:
             text += f" · startup checked {self.monitor.last_check}"

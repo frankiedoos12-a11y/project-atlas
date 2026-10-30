@@ -287,7 +287,7 @@ class NewProgramWatcher:
                 continue
             self._told.add(r.sha256)
             log.warning("Program just started and is %s: %s (%s)", f.verdict.value, f.path, "; ".join(r.reasons))
-            link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+            link = r.vt_link
             self.on_finding(f"Atlas: {f.verdict.value} program just started",
                             f"{f.path.name}\n{r.threat_text or r.reasons[0]}\nSee Running now to end it.", link)
 

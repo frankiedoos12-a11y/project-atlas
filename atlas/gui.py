@@ -569,7 +569,7 @@ class AtlasWindow:
             self.protection_label.configure(text="●  Protection OFF", style="Off.TLabel")
             self.start_button.pack(anchor="e", pady=(4, 0))
         self.key_label.configure(text=f"VirusTotal key: connected  ·  {vt_usage_text(self.store)}" if self.scanner.vt
-                                 else "VirusTotal key: not set, so only Atlas's own checks run")
+                                 else "VirusTotal: not connected  ·  Microsoft Defender checks programs instead")
         if self.scanner.vt:
             self.key_button.pack_forget()
         else:
@@ -1405,10 +1405,9 @@ class AtlasWindow:
             verdict = check.verdict.value
             lines = [("Verdict", verdict.upper(), verdict), ("Link", check.url, None)]
             lines += [("Why", r, None) for r in check.reasons]
-            report = check.url_report if check.url_report and check.url_report.found else check.domain_report
             self.link_result.configure(text=f"{verdict.upper()}:  {check.reasons[0] if check.reasons else ''}",
                                        foreground=VERDICT_COLORS.get(verdict, "#444444"))
-            self._browser_vt_link = report.gui_link if report and report.found else None
+            self._browser_vt_link = check.vt_link
             self.browser_vt.configure(state="normal" if self._browser_vt_link else "disabled")
             self.browser_detail.show(lines)
             self._link_check = check
@@ -1727,7 +1726,7 @@ class AtlasWindow:
             lines += [("Why", reason, None) for reason in r.reasons] + threat_lines(r)
             if r.sha256:
                 lines.append(("SHA-256", r.sha256, None))
-            self._running_link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+            self._running_link = r.vt_link
             self.running_location.configure(state="normal")
             self.running_end.configure(state="normal")
         else:
@@ -1885,8 +1884,7 @@ class AtlasWindow:
         if p.file and p.file.result:
             lines += threat_lines(p.file.result)
         self.installed_detail.show(lines)
-        report = p.file.result.file_report if p.file and p.file.result else None
-        self._installed_link = report.gui_link if report and report.found else None
+        self._installed_link = p.file.result.vt_link if p.file and p.file.result else None
         self.installed_vt.configure(state="normal" if self._installed_link else "disabled")
         self.installed_uninstall.configure(state="normal" if p.uninstall else "disabled")
         for button in (self.installed_location, self.installed_defender):
@@ -2112,7 +2110,7 @@ class AtlasWindow:
         if r.sha256:
             lines.append(("SHA-256", r.sha256, None))
         self.fullscan_detail.show(lines)
-        self._fullscan_link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+        self._fullscan_link = r.vt_link
         for button in (self.fullscan_location, self.fullscan_quarantine, self.fullscan_defender):
             button.configure(state="normal")
         self.fullscan_vt.configure(state="normal" if self._fullscan_link else "disabled")

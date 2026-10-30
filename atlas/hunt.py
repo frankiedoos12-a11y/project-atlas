@@ -59,7 +59,7 @@ def sync_gti(scanner: Scanner, progress: Callable[[str], None] | None = None,
 def _flagged_file(f: RunningFile, area: str, why: str) -> Finding:
     r = f.result
     details = [why, *r.reasons] + [f"{label}: {text}" for label, text, _ in threat_lines(r)]
-    link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+    link = r.vt_link
     unknown = r.verdict is Verdict.UNKNOWN
     return Finding(area, f"VirusTotal has never seen {f.path.name}" if unknown else f"VirusTotal flags {f.path.name}",
                    NOTE if unknown else WARN,
@@ -124,8 +124,7 @@ def check_hunt(scanner: Scanner, progress: Callable[[str], None] | None = None,
             if not Path(path).is_file():
                 return None
             r = scanner.scan(Path(path), act=False)
-            return r.signature, r.verdict.value, r.file_report.gui_link if r.file_report and r.file_report.found \
-                else None
+            return r.signature, r.verdict.value, r.vt_link
 
         return findings + registry.explain_changes(registry.watch_changes(scanner.store, spots), judge)
 

@@ -85,9 +85,8 @@ def handle(request: dict, scanner) -> dict:
         return {"verdict": "skipped", "reasons": ["An address on this PC or your home network"]}
     target = short_url(url) if request.get("auto", True) else url
     check = check_link(scanner, target)
-    report = check.url_report if check.url_report and check.url_report.found else check.domain_report
     reply = {"verdict": check.verdict.value, "url": check.url, "host": check.host, "reasons": check.reasons,
-             "vt_link": report.gui_link if report and report.found else None}
+             "vt_link": check.vt_link}
     if check.verdict.value in ("malicious", "suspicious", "unknown"):  # only the site's name goes in the report
         reply["report"] = mistakes.issue_url("Site", check.host, check.verdict.value, check.reasons)
     return reply

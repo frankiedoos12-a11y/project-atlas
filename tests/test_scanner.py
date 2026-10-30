@@ -145,13 +145,6 @@ def test_reports_are_cached(make_scanner, downloads):
     assert vt.calls.count(("file", sha256_file(f))) == 1
 
 
-def test_no_api_key_reports_error(make_scanner, downloads):
-    f = write(downloads / "a.exe", b"MZ")
-    result = make_scanner(None).scan(f)
-    assert result.verdict is Verdict.ERROR
-    assert f.exists()
-
-
 def test_history_is_recorded(make_scanner, store, downloads):
     f = write(downloads / "a.txt", b"x")
     make_scanner(FakeVT()).scan(f)

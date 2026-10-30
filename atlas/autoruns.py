@@ -478,9 +478,17 @@ def assess(entry: Autorun, sig: Signature | None, scanner: Scanner | None) -> Sc
     if is_microsoft(sig) and not result.reasons:
         result.reasons.append(f"Signed by {sig.signer}")
         return result  # Windows' own files: no need to spend VirusTotal lookups
-    if scanner is None or scanner.vt is None:
+    if scanner is None:
         if not result.reasons:
             result.reasons.append("VirusTotal check skipped")
+        return result
+    if scanner.vt is None:
+        if not result.reasons:
+            result.reasons.append("VirusTotal isn't connected: use View on VirusTotal to look it up")
+        try:
+            result.sha256 = sha256_file(entry.path)  # for that link
+        except OSError:
+            pass
         return result
 
     try:

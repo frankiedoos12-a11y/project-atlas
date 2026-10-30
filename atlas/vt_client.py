@@ -20,6 +20,17 @@ GUI_BASE = "https://www.virustotal.com/gui"
 AI_SOURCES = {"code_insight": "Code Insight", "references_summary": "What reports say"}
 
 
+def gui_link(kind: str, target: str) -> str:
+    """VirusTotal's web page for a file (SHA-256), domain, IP or URL. Opening it needs no API key."""
+    if kind == "file":
+        return f"{GUI_BASE}/file/{target}"
+    if kind == "domain":
+        return f"{GUI_BASE}/domain/{target}"
+    if kind == "ip":
+        return f"{GUI_BASE}/ip-address/{target}"
+    return f"{GUI_BASE}/url/{url_id(target)}"
+
+
 class VTError(Exception):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
@@ -62,13 +73,7 @@ class Report:
 
     @property
     def gui_link(self) -> str:
-        if self.kind == "file":
-            return f"{GUI_BASE}/file/{self.target}"
-        if self.kind == "domain":
-            return f"{GUI_BASE}/domain/{self.target}"
-        if self.kind == "ip":
-            return f"{GUI_BASE}/ip-address/{self.target}"
-        return f"{GUI_BASE}/url/{url_id(self.target)}"
+        return gui_link(self.kind, self.target)
 
     @classmethod
     def from_attributes(cls, kind: str, target: str, attrs: dict) -> Report:

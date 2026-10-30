@@ -328,7 +328,7 @@ class Store:
                 r = results.get(e.key)
                 if r is not None:
                     sig = r.signature
-                    link = r.file_report.gui_link if r.file_report and r.file_report.found else None
+                    link = r.vt_link
                     self._conn.execute(
                         "UPDATE autoruns SET verdict = ?, signer = ?, sig_status = ?, reasons = ?, vt_link = ?,"
                         " sha256 = ?, checked_at = ? WHERE key = ?",

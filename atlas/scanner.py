@@ -23,7 +23,7 @@ from atlas.local_checks import (
 )
 from atlas.quarantine import quarantine_file
 from atlas.sites import age_text, site_warnings
-from atlas.vt_client import Report, VTClient, VTError
+from atlas.vt_client import Report, VTClient, VTError, gui_link
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +73,13 @@ class ScanResult:
         names = ", ".join(n[:1].upper() + n[1:] for n in report.threat_names[:3])
         kind = report.label.split(".")[0] if report.label else None
         return f"{names} ({kind})" if kind else names
+
+    @property
+    def vt_link(self) -> str | None:
+        """The file's VirusTotal page: its report, or (with no API key) the page to look it up by hand."""
+        if self.file_report is not None:
+            return self.file_report.gui_link if self.file_report.found else None
+        return gui_link("file", self.sha256) if self.sha256 else None
 
     @property
     def signer_text(self) -> str | None:
@@ -212,7 +219,7 @@ class Scanner:
             result.raise_to(Verdict.SUSPICIOUS, "Digital signature is broken: the file was modified after signing")
 
         if self.vt is None:
-            result.raise_to(Verdict.ERROR, "No VirusTotal API key configured; only local checks ran")
+            self._without_virustotal(result, risky)
             return self._finish(result)
 
         inside: list[str] = []
@@ -285,6 +292,30 @@ class Scanner:
             except OSError as exc:
                 result.action = f"quarantine failed: {exc}"
         return self._finish(result)
+
+    def _without_virustotal(self, result: ScanResult, risky: bool) -> None:
+        """No API key: Microsoft Defender scans the file instead (it's on every Windows PC, and needs no key or
+        administrator rights). Files that can't run code are left to Defender's own real-time protection."""
+        if not risky:
+            result.reasons.append("Not a type that can run code. VirusTotal isn't connected, so it wasn't looked up")
+            return
+        from atlas import defender
+
+        scan = defender.scan_file(result.path, timeout=120)
+        if scan.clean is False:
+            result.raise_to(Verdict.MALICIOUS, f"Microsoft {scan.message}")
+        elif scan.clean is None:
+            result.raise_to(Verdict.ERROR, f"{scan.message}. VirusTotal isn't connected, so nothing else checked it")
+        elif result.signature and result.signature.valid:
+            result.reasons.append("Microsoft Defender found no threats. VirusTotal isn't connected, so that's one "
+                                  "opinion: use View on VirusTotal for more")
+        elif result.motw and result.motw.zone == 3:  # downloaded from the internet
+            result.raise_to(Verdict.UNKNOWN, "Microsoft Defender found no threats, but this download isn't signed "
+                                             "and VirusTotal isn't connected, so Atlas can't tell whether other "
+                                             "people have run it safely. Use View on VirusTotal before opening it")
+        else:
+            result.reasons.append("Microsoft Defender found no threats. It isn't signed and VirusTotal isn't "
+                                  "connected: use View on VirusTotal for more")
 
     def _check_archive(self, result: ScanResult) -> tuple[list[str], str | None]:
         """Look up the programs inside a ZIP, 7z, RAR or ISO. Returns (notes for the end of the reasons,

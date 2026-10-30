@@ -127,8 +127,9 @@ class ScanWindow:
         self.progress = ttk.Progressbar(top, mode="determinate", length=int(160 * self.scale))
         self.progress.pack(side="right", padx=8)
         if self.scanner.vt is None:
-            ttk.Label(frame, text="No VirusTotal key is set, so only local checks run. Run `atlas set-key` first.",
-                      foreground=VERDICT_COLORS["error"]).pack(fill="x", pady=(6, 0))
+            ttk.Label(frame, text="VirusTotal isn't connected, so Microsoft Defender checks programs instead. "
+                                  "Select a file and click View on VirusTotal to look it up yourself.",
+                      style="Summary.TLabel").pack(fill="x", pady=(6, 0))
 
         panes = ttk.PanedWindow(frame, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
@@ -221,7 +222,7 @@ class ScanWindow:
         return (iid, self.results[iid]) if iid in self.results else (None, None)
 
     def _report_link(self, r: ScanResult) -> str | None:
-        return r.file_report.gui_link if r.file_report and r.file_report.found else None
+        return r.vt_link
 
     def _set_buttons(self, r: ScanResult | None) -> None:
         exists = bool(r and r.path.exists())

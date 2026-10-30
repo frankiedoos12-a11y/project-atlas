@@ -55,7 +55,7 @@ def toast(title: str, body: str, link: str | None = None, loud: bool = False,
 
 
 def _vt_link(result: ScanResult) -> str | None:
-    return result.file_report.gui_link if result.file_report and result.file_report.found else None
+    return result.vt_link
 
 
 def notify(result: ScanResult, show_clean: bool = False) -> None:
