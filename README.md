@@ -42,6 +42,8 @@ After installing you don't need to start anything: **Atlas is already running**,
 
 The setup (`ProjectAtlas-Setup.exe`) puts **Project Atlas** on the desktop too. It doesn't add `atlas` to terminals or a separate tray shortcut: the window's **Start protection** button starts the tray, and the commands are in `%LOCALAPPDATA%\Programs\Project Atlas\atlas.exe`.
 
+The tray and the window never run as administrator. If you start them from an administrator terminal, they restart themselves with your normal rights. Windows blocks dragging files into an administrator window, and the window opens untrusted files such as emails. The few features that need administrator rights ask Windows for them: the deep check, Defender's full and offline scans, and Defender's extra protection.
+
 What Atlas does:
 
 ## 1. Download guard

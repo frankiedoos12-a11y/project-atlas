@@ -2172,6 +2172,12 @@ class AtlasWindow:
                   text="Getting an email file: in Outlook on the PC, drag the email to the desktop. In Gmail: "
                        "\u22ee > Download message. In Outlook on the web: \u22ef > Save > Save as. Then drop the file "
                        "on the box below, or click Open."), pady=(6, 0))
+        from atlas import unelevate
+
+        if unelevate.is_elevated():  # Windows blocks dragging from Explorer into an administrator window
+            self._fit(ttk.Label(tab, style="Hint.TLabel",
+                      text="Atlas is running as administrator, so Windows won't let you drag files in: click "
+                           "Open instead, or restart Atlas from the Start menu."), pady=(4, 0))
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
         self.scam_text = tk.Text(panes, height=8, wrap="word", font=("Segoe UI", 10), padx=10, pady=8, undo=True)
@@ -2531,7 +2537,13 @@ def _bring_existing_window_forward() -> bool:
 
 
 def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] == "--scan":  # from Explorer's right-click menu
+    scan = len(sys.argv) > 1 and sys.argv[1] == "--scan"  # from Explorer's right-click menu
+    from atlas import unelevate
+    from atlas.app import gui_command, scan_command
+
+    if unelevate.restart_unelevated(scan_command(sys.argv[2:]) if scan else gui_command()):  # never as administrator
+        return 0
+    if scan:
         from atlas.emailcheck import EMAIL_TYPES
 
         paths = sys.argv[2:]

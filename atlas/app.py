@@ -90,28 +90,36 @@ def guard_running() -> bool:
     return False
 
 
-def _launch(gui_script: str, module_command: str) -> None:
-    """Start an Atlas GUI process (tray or window) with no console window."""
+def _command(gui_script: str, module_command: str) -> list[str]:
+    """The command that starts an Atlas GUI process (tray or window) with no console window."""
     if frozen.is_frozen():
-        subprocess.Popen([str(frozen.gui_exe()), "-m", f"atlas.{module_command}"], close_fds=True,
-                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
-        return
+        return [str(frozen.gui_exe()), "-m", f"atlas.{module_command}"]
     scripts = Path(sys.executable).parent
     exe = scripts / f"{gui_script}.exe"
     if exe.exists():
-        cmd = [str(exe)]
-    else:
-        pythonw = scripts / "pythonw.exe"
-        cmd = [str(pythonw if pythonw.exists() else sys.executable), "-m", "atlas", module_command]
+        return [str(exe)]
+    pythonw = scripts / "pythonw.exe"
+    return [str(pythonw if pythonw.exists() else sys.executable), "-m", "atlas", module_command]
+
+
+def tray_command() -> list[str]:
+    return _command("atlas-tray", "tray")
+
+
+def gui_command() -> list[str]:
+    return _command("atlas-gui", "gui")
+
+
+def _launch(cmd: list[str]) -> None:
     subprocess.Popen(cmd, close_fds=True, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
 
 
 def launch_tray() -> None:
-    _launch("atlas-tray", "tray")
+    _launch(tray_command())
 
 
 def launch_gui() -> None:
-    _launch("atlas-gui", "gui")
+    _launch(gui_command())
 
 
 def scan_command(paths: list[str]) -> list[str]:
@@ -127,7 +135,7 @@ def scan_command(paths: list[str]) -> list[str]:
 
 
 def launch_scan(paths: list[str]) -> None:
-    subprocess.Popen(scan_command(paths), close_fds=True, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    _launch(scan_command(paths))
 
 
 def claim_single_instance() -> bool:

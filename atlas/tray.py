@@ -15,8 +15,9 @@ from collections.abc import Callable
 import pystray
 from PIL import Image, ImageDraw
 
-from atlas import __version__, autostart, config, contextmenu
-from atlas.app import build_scanner, claim_single_instance, launch_gui, log_file, setup_logging, watch_folders
+from atlas import __version__, autostart, config, contextmenu, unelevate
+from atlas.app import (build_scanner, claim_single_instance, launch_gui, log_file, setup_logging, tray_command,
+                       watch_folders)
 from atlas.autoruns import Autorun, AutorunMonitor
 from atlas.links import check_link, read_clipboard
 from atlas.notify import notify_autorun, toast
@@ -423,6 +424,8 @@ class AtlasTray:
 
 def main() -> int:
     setup_logging()
+    if unelevate.restart_unelevated(tray_command()):  # never as administrator
+        return 0
     if not claim_single_instance():
         toast("Project Atlas is already running", "Look for the globe icon by the clock (it may be under ^).")
         return 1
