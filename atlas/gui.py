@@ -1922,9 +1922,10 @@ class AtlasWindow:
         self.home_confirm = ttk.Button(bar, text="This is my home network", command=self._confirm_home_network)
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
-        self.home_table = Table(panes, [("device", "Device", 260), ("maker", "Maker", 220), ("ip", "Address", 120),
-                                        ("mac", "Hardware address", 160), ("first", "First seen", 130),
-                                        ("last", "Last seen", 130)], self._show_home_device, self.scale)
+        self.home_table = Table(panes, [("device", "Device", 200), ("model", "Model", 140), ("maker", "Maker", 150),
+                                        ("ip", "Address", 100), ("mac", "Hardware address", 145),
+                                        ("first", "First seen", 125), ("last", "Last seen", 125)],
+                                self._show_home_device, self.scale)
         self.home_table.tree.tag_configure("new", foreground=VERDICT_COLORS["unknown"])
         panes.add(self.home_table, weight=3)
         lower = ttk.Frame(panes)
@@ -1935,6 +1936,9 @@ class AtlasWindow:
                                           self._home_check.page.get("url") or
                                           f"http://{self._home_check.network.gateway}/"))
         self.home_router.pack(side="left")
+        self.home_identify = ttk.Button(buttons, text="Identify this device", state="disabled",
+                                        command=self._identify_home_device)
+        self.home_identify.pack(side="left", padx=(6, 0))
         self.home_detail = DetailBox(lower)
         self.home_detail.pack(fill="both", expand=True)
         panes.add(lower, weight=2)
@@ -1969,7 +1973,8 @@ class AtlasWindow:
                 self.home_confirm.pack_forget()
             new = {f.key.removeprefix("homenet:new:") for f in check.findings if f.key.startswith("homenet:new:")}
             self.home_table.replace([
-                (d.mac, (d.label, d.maker or "-", d.ip, d.mac, local_time(d.first_seen), local_time(d.last_seen)),
+                (d.mac, (d.label, d.model or "-", d.maker or "-", d.ip, d.mac, local_time(d.first_seen),
+                         local_time(d.last_seen)),
                  ("new",) if d.mac in new else ()) for d in check.devices])
             self.home_router.configure(state="normal" if check.network and not asking else "disabled")
             self._show_home_findings()
@@ -1991,18 +1996,57 @@ class AtlasWindow:
     def _show_home_device(self, iid: str) -> None:
         check = self._home_check
         d = next((d for d in check.devices if d.mac == iid), None) if check else None
+        self.home_identify.configure(state="normal" if d is not None and d.role != "This PC" else "disabled")
         if d is None:
             return self._show_home_findings()
-        lines = [("Device", d.label, None), ("Maker", d.maker or "Unknown", None), ("Address", d.ip, None),
-                 ("Hardware address", d.mac, None), ("First seen", local_time(d.first_seen), None),
-                 ("Last seen", local_time(d.last_seen), None)]
-        if d.maker == "Private address":
+        clues = check.clues.get(d.ip) or {}
+        lines = [("Device", d.label, None)]
+        if d.model:
+            lines.append(("Model", d.model, None))
+        lines += [("Seems to be", kind, None) for kind in clues.get("kinds", [])]
+        lines += [("Maker", d.maker or "Unknown", None), ("Address", d.ip, None),
+                  ("Hardware address", d.mac, None), ("First seen", local_time(d.first_seen), None),
+                  ("Last seen", local_time(d.last_seen), None)]
+        if clues.get("source"):
+            lines.append(("Told by", ", ".join(clues["source"]) + " (what the device announces about itself)", None))
+        if d.name or d.model or d.role:
+            pass  # it said what it is
+        elif d.maker == "Private address":
             lines.append(("Note", "Phones, tablets and newer laptops make up their hardware address for privacy, "
                                   "so their maker can't be told. Its name in your router's app usually can.", None))
-        elif not d.role and not d.name:
-            lines.append(("Note", "To find out what it is, look for this hardware address in your router's app, "
-                                  "which lists connected devices.", None))
+        else:
+            lines.append(("Note", "To find out what it is, click Identify this device, or look for this hardware "
+                                  "address in your router's app, which lists connected devices.", None))
         self.home_detail.show(lines)
+
+    def _identify_home_device(self) -> None:
+        from atlas import identify
+
+        check = self._home_check
+        iid = self.home_table.selection()
+        d = next((d for d in check.devices if d.mac == iid), None) if check else None
+        if d is None:
+            return
+        if not messagebox.askyesno(WINDOW_TITLE, f"Identify {d.label} ({d.ip})?\n\nAtlas tries a normal connection "
+                                                 f"to {len(identify.PORT_HINTS)} well-known ports on this one "
+                                                 "device, closing each straight away, and reads its web page's "
+                                                 "title if it has one. It takes a few seconds and doesn't disturb "
+                                                 "it.\n\nOnly do this for a device that belongs to your household."):
+            return
+        self.home_identify.configure(state="disabled")
+        self.home_detail.add(("Identify", "Knocking on well-known ports...", None))
+
+        def done(knocked) -> None:
+            self.home_identify.configure(state="normal")
+            if knocked is None:
+                return
+            self.home_detail.add(("Guess", identify.guess(knocked), "clean" if knocked.open_ports else None))
+            for hint in knocked.hints:
+                self.home_detail.add(("Open", hint, None))
+            if knocked.page_title:
+                self.home_detail.add(("Its web page", knocked.page_title, None))
+
+        self.in_background(lambda: identify.knock(d.ip), done)
 
     def _confirm_home_network(self) -> None:
         check = self._home_check

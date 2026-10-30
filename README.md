@@ -269,10 +269,20 @@ The tray runs the threat hunt with the Protection checks every hour and alerts y
 
 ## 10. Home network: the router, the Wi-Fi and every device
 
-**Protection > Home network** lists every device on your home network: the router, this PC, TVs, phones, consoles and cameras. It also checks the things that protect all of them. Atlas only looks: it never signs in to the router, and it never port-scans the devices.
+**Protection > Home network** lists every device on your home network: the router, this PC, TVs, phones, consoles and cameras. It also checks the things that protect all of them. The rule is *protect, not disturb*: Atlas never signs in to the router, never floods or sweeps the network, and never scans a device on its own.
 
 - **Which networks:** only a network Windows calls *Private*, or one you confirmed with **This is my home network**. Windows 11 marks new networks *Public*, homes included, so Atlas asks first. It never looks at a café's or hotel's network.
-- **Devices:** each device shows its maker, address and when it was first and last seen. The tray tells you once when a new device joins. Phones and tablets use made-up hardware addresses, so they show as *Phone, tablet or laptop*; your router's app shows their names.
+- **Devices:** each device shows its name and model, maker, address, and when it was first and last seen. The tray tells you once when a new device joins.
+- **Names and models come from what devices announce about themselves:**
+  - **Bonjour:** Apple devices, Chromecasts, printers, speakers and smart-home gear. For example: *Ireland TV, AppleTV11,1*.
+  - **UPnP:** TVs, consoles and media boxes. For example: *Roku Ultra, Roku 4670RW*.
+  - **Windows PCs:** their name.
+
+  Phones and tablets use made-up hardware addresses and often stay quiet, so they show as *Phone, tablet or laptop*; your router's app shows their names.
+- **Identify this device:** for a mystery device, select it and click this button.
+  - Atlas tries a normal connection to about 20 well-known ports on that one device and reads its web page's title, if it has one.
+  - It then guesses, for example "Probably a printer" or "Probably an iPhone or iPad".
+  - It only does this when you click, and only for the device you chose.
 - **Wi-Fi security:**
   - No password, WEP, WPA or TKIP needs a look.
   - WPA2 (AES) is fine.
@@ -286,8 +296,12 @@ The tray runs the threat hunt with the Protection checks every hour and alerts y
   - An unfamiliar provider is worth knowing about.
   - With a VirusTotal key, a flagged provider needs a look: someone may have changed the router's DNS setting.
 - **The router:** Atlas recognises the brand from its sign-in page. It then gives a checklist to confirm in the router's app: the admin password, automatic updates, WPS and remote management. Atlas can't see these without signing in.
+- **Is the router out of date?** Atlas can't see the firmware version without signing in, and it never updates the router itself: a failed update can leave the house offline. Instead:
+  - When the router names its model (in UPnP or on its sign-in page), Atlas checks it against [CISA's list of flaws criminals are using](https://www.cisa.gov/known-exploited-vulnerabilities-catalog).
+  - A listed model needs a look: update its firmware in the router's app. If CISA says the model is past end of life, the maker no longer fixes it, and Atlas suggests replacing it.
+  - Gateways from your internet provider (Xfinity, AT&T, Verizon, Spectrum) are updated by the provider; you can't update them yourself.
 
-Finding the devices takes about 15 seconds once a day, by sending one tiny packet to each address on the network. The rest of the day Atlas reads what Windows already knows, which takes a few seconds an hour. `atlas home` prints it (`--now` looks again). To switch it off, set `check_home_network` to `false` in the settings.
+Finding the devices takes about 20 seconds once a day: Atlas sends one tiny packet to each address on the network, then asks devices once to announce themselves. The rest of the day Atlas reads what Windows already knows, which takes a few seconds an hour. `atlas home` prints it (`--now` looks again). To switch it off, set `check_home_network` to `false` in the settings.
 
 ## Updates and VirusTotal usage
 

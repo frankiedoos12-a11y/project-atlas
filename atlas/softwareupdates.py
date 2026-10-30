@@ -121,26 +121,33 @@ def upgrade_all_command(package_ids: list[str]) -> str:
 
 # --- CISA KEV ----------------------------------------------------------------------------------------
 
-def kev_catalog(store=None) -> list[dict]:
-    """The catalog's recent entries, downloaded at most once a day."""
-    if store is not None:
-        cached = store.cached_extra("kev", "catalog", 24)
-        if cached is not None:
-            return cached
-    try:
-        resp = requests.get(KEV_URL, timeout=30)
-        resp.raise_for_status()
-        rows = resp.json().get("vulnerabilities", [])
-    except (requests.RequestException, ValueError):
-        log.warning("Couldn't download the CISA KEV catalog")
-        return (store.cached_extra("kev", "catalog", 24 * 30) or []) if store is not None else []
-    since = (date.today() - timedelta(days=365 * KEV_YEARS)).isoformat()
-    keep = [{k: r.get(k) for k in ("cveID", "vendorProject", "product", "vulnerabilityName", "dateAdded",
-                                   "knownRansomwareCampaignUse")}
-            for r in rows if (r.get("dateAdded") or "") >= since]
-    if store is not None:
-        store.cache_extra("kev", "catalog", keep)
-    return keep
+END_OF_LIFE = re.compile(r"end[- ]of[- ](?:life|service|support)|\bEoL\b|\bEoS\b", re.I)
+
+
+def kev_catalog(store=None, years: int | None = KEV_YEARS) -> list[dict]:
+    """The catalog's entries added in the last `years` (None: all of them, for routers, which stay in homes
+    for a decade), downloaded at most once a day. "eol" marks entries CISA says are past end of life."""
+    rows = store.cached_extra("kev", "all", 24) if store is not None else None
+    if rows is None:
+        try:
+            resp = requests.get(KEV_URL, timeout=30)
+            resp.raise_for_status()
+            rows = [{**{k: r.get(k) for k in ("cveID", "vendorProject", "product", "vulnerabilityName",
+                                              "dateAdded", "knownRansomwareCampaignUse")},
+                     "shortDescription": (r.get("shortDescription") or "")[:300],
+                     "eol": bool(END_OF_LIFE.search(f"{r.get('requiredAction')} {r.get('shortDescription')} "
+                                                    f"{r.get('notes')}"))}
+                    for r in resp.json().get("vulnerabilities", [])]
+        except (requests.RequestException, ValueError):
+            log.warning("Couldn't download the CISA KEV catalog")
+            rows = (store.cached_extra("kev", "all", 24 * 30) or []) if store is not None else []
+        else:
+            if store is not None:
+                store.cache_extra("kev", "all", rows)
+    if years is None:
+        return rows
+    since = (date.today() - timedelta(days=365 * years)).isoformat()
+    return [r for r in rows if (r.get("dateAdded") or "") >= since]
 
 
 def _words(text: str) -> set[str]:

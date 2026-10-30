@@ -7,7 +7,8 @@ Everything here is look-only and needs no administrator rights:
 - One small packet to each address on the network once a day, so Windows learns which devices are there
   (they're never port-scanned or signed in to).
 - UPnP: whether the router lets devices open doors to the internet by themselves, and which ones did.
-- The router's sign-in page, only to recognise the brand (Atlas never signs in).
+- The router's sign-in page, only to recognise the brand and model (Atlas never signs in). A known model is
+  checked against CISA's list of flaws criminals are using, which also says which models are past end of life.
 - Who answers this PC's website lookups (DNS), in case the router's settings were changed.
 """
 
@@ -31,6 +32,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from atlas import identify
 from atlas.findings import NOTE, OK, WARN, Finding
 from atlas.local_checks import run_powershell_json
 
@@ -59,7 +61,13 @@ ROUTER_BRANDS = [
     (r"synology", "Synology", "Synology Router Manager"),
     (r"mikrotik|routeros", "MikroTik", "WinBox or its web page"),
     (r"vantiva|technicolor", "Xfinity or another provider's gateway", "your internet provider's app"),
+    (r"d-?link", "D-Link", "the D-Link app or its web page"),
+    (r"tenda", "Tenda", "the Tenda WiFi app or its web page"),
+    (r"zyxel", "Zyxel", "its web page"),
+    (r"draytek|vigor", "DrayTek", "its web page"),
 ]
+# Gateways the internet provider owns and updates by itself; the owner can't update them.
+PROVIDER_BRANDS = {"Xfinity", "Verizon", "AT&T", "Spectrum", "Xfinity or another provider's gateway"}
 # Doors devices opened to the internet that are risky: anyone online can knock on them.
 RISKY_PORTS = {21: "file sharing (FTP)", 22: "remote sign-in (SSH)", 23: "remote sign-in (Telnet)",
                80: "a web page", 443: "a web page", 445: "Windows file sharing", 554: "camera video (RTSP)",
@@ -116,6 +124,7 @@ class Device:
     last_seen: str = ""
     initial: bool = False  # already there the first time Atlas looked at this network
     role: str = ""  # "Router", "This PC" or ""
+    model: str = ""  # what the device says it is, e.g. "Roku 4670RW"
 
     @property
     def label(self) -> str:
@@ -141,6 +150,9 @@ class HomeCheck:
     resolver_owner: str | None = None
     checked_at: str = ""
     findings: list[Finding] = field(default_factory=list)
+    clues: dict[str, dict] = field(default_factory=dict)  # {ip: what the device said about itself}
+    router_model: str = ""  # e.g. "NETGEAR R7000", when the router says
+    router_holes: list[dict] = field(default_factory=list)  # CISA KEV entries for that model
 
 
 # --- Device makers ----------------------------------------------------------------------------------------
@@ -379,17 +391,57 @@ def router_page(ip: str) -> dict:
         except requests.RequestException:
             continue
         title = re.search(r"<title[^>]*>(.*?)</title>", r.text[:20000], re.I | re.S)
+        realm = re.search(r'realm="([^"]*)"', r.headers.get("WWW-Authenticate", ""))  # e.g. "NETGEAR R7000"
         return {"server": r.headers.get("Server", ""), "title": re.sub(r"\s+", " ", title.group(1)).strip()[:80]
-                if title else "", "url": r.url}
+                if title else "", "realm": realm.group(1)[:80] if realm else "", "url": r.url}
     return {}
 
 
 def router_brand(page: dict, router_maker: str) -> tuple[str, str] | None:
-    text = f"{page.get('title', '')} {page.get('server', '')} {router_maker}".lower()
+    text = f"{page.get('title', '')} {page.get('realm', '')} {page.get('server', '')} {router_maker}".lower()
     for pattern, name, manage in ROUTER_BRANDS:
         if re.search(pattern, text):
             return name, manage
     return None
+
+
+def model_codes(text: str) -> set[str]:
+    """Model numbers in a text: "D-Link DIR-859, Archer AX-21 v3" -> {"dir859", "ax21"}. Words with both letters
+    and digits; version and speed words ("v3", "5GHz") don't count."""
+    codes = set()
+    for word in re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", text):
+        for part in {word, *word.split("-")}:
+            code = part.replace("-", "").lower()
+            if (re.search(r"\d", code) and re.search(r"[a-z]", code)
+                    and not re.fullmatch(r"v\d+|\d+(?:ghz|mhz|mbps|gbps|g|m)|cve\d+|\d+(?:st|nd|rd|th)", code)):
+                codes.add(code)
+    return codes
+
+
+def router_model(page: dict, clue: dict) -> str:
+    """The router's model, when it says: its UPnP or Bonjour description, else its sign-in page."""
+    if clue.get("model"):
+        return clue["model"]
+    for text in (page.get("realm", ""), page.get("title", "")):
+        if model_codes(text):
+            return text
+    return ""
+
+
+def router_holes(model: str, vendor: str, catalog: list[dict]) -> list[dict]:
+    """CISA KEV entries naming this router's model. The maker must match too, so "AC1900" from one maker
+    never matches another's."""
+    have = model_codes(model)
+    vendor = re.sub(r"[^a-z0-9]", "", vendor.lower())
+    found = []
+    for e in catalog:
+        maker = re.sub(r"[^a-z0-9]", "", (e.get("vendorProject") or "").lower())
+        if not have or not maker or maker not in vendor:
+            continue
+        named = model_codes(f"{e.get('product')} {e.get('vulnerabilityName')} {e.get('shortDescription')}")
+        if have & named:
+            found.append(e)
+    return sorted(found, key=lambda e: e.get("dateAdded") or "", reverse=True)
 
 
 def resolver_ip() -> str | None:
@@ -470,16 +522,44 @@ def wifi_findings(w: Wifi | None) -> list[Finding]:
 def router_findings(check: HomeCheck) -> list[Finding]:
     net = check.network
     name, manage = check.brand or ("", "its app or web page")
-    title = f"Your router: {name} ({net.gateway})" if name else f"Your router is at {net.gateway}"
+    model = check.router_model
+    if model and name and name.split()[0].lower() not in model.lower():
+        model = f"{name} {model}"
+    what = model or name
+    title = f"Your router: {what} ({net.gateway})" if what else f"Your router is at {net.gateway}"
     url = check.page.get("url") or f"http://{net.gateway}/"
-    return [Finding("Router", title, NOTE, [
+    provider = name in PROVIDER_BRANDS
+    updates = ("- Firmware updates: your internet provider installs them by itself; you can't (and don't need "
+               "to) update it." if provider else "- Automatic firmware updates are on. Atlas can't see the "
+               "firmware version without signing in.")
+    found = [Finding("Router", title, NOTE, [
         f"Atlas never signs in to your router, so check these in {manage}:",
         "- Its admin password isn't the one printed on the label or the default (such as \"admin\" or "
         "\"password\").",
-        "- Automatic firmware updates are on.",
+        updates,
         "- WPS (the push-button or PIN pairing) is off.",
         "- Remote management (managing it from the internet) is off unless you use it.",
     ], key="homenet:router", fix="open", fix_label="Open the router's page", data={"url": url})]
+    holes = check.router_holes
+    if holes:
+        from atlas.softwareupdates import KEV_LINK
+
+        cves = ", ".join(e["cveID"] for e in holes[:3]) + (f" and {len(holes) - 3} more" if len(holes) > 3 else "")
+        details = [f"CISA lists flaws in this model that criminals are using right now: {cves}."]
+        if any(e.get("eol") for e in holes):
+            title = f"Your router ({what}) has flaws under attack and may never be fixed"
+            details.append("CISA says some affected models are past end of life: the maker no longer fixes them. "
+                           "Check the maker's support page for your exact model and version; if it gets no more "
+                           "updates, replace the router.")
+        else:
+            title = f"Your router ({what}) has flaws under attack: update its firmware"
+            details.append(f"Install the latest firmware in {manage} (or the maker's support page), and turn on "
+                           "automatic updates. Atlas can't see the firmware version, so this may already be done.")
+        if provider:
+            details.append("It's your internet provider's gateway: if it's old, ask them for a new one.")
+        found.append(Finding("Router", title, WARN, details, key=f"homenet:router:kev:{holes[0]['cveID']}",
+                             vt_link=KEV_LINK + holes[0]["cveID"]))
+    return found
 
 
 def upnp_findings(check: HomeCheck) -> list[Finding]:
@@ -574,11 +654,18 @@ def check_home(store, lookup=None, threshold: int = 3, force: bool = False,
         gateway_service = find_gateway_service(hello.get(net.gateway, []))
         resolver = resolver_ip()
         neighbours = read_neighbours(net)
+        ips = [ip for ip, _ in neighbours]
+        locations = {ip: rows[0]["location"] for ip, rows in hello.items() if rows and rows[0]["location"]}
+        if gateway_service:
+            locations[net.gateway] = gateway_service  # names the router's model
+        clues = identify.merge(identify.ask_bonjour(net.ip), identify.read_upnp_descriptions(locations),
+                               identify.ask_pc_names(ips))
         daily = {"page": router_page(net.gateway), "upnp": gateway_service is not None,
                  "mappings": [m.__dict__ for m in port_mappings(gateway_service)] if gateway_service else [],
                  "resolver": resolver, "resolver_owner": network_owner(resolver) if resolver else None,
-                 "names": device_names([ip for ip, _ in neighbours]),
-                 "ssdp": {ip: ssdp_name(rows) for ip, rows in hello.items() if ssdp_name(rows)}}
+                 "names": device_names(ips),
+                 "ssdp": {ip: ssdp_name(rows) for ip, rows in hello.items() if ssdp_name(rows)},
+                 "clues": clues}
         if store is not None:
             store.cache_extra("homenet", net.id, daily)
     else:
@@ -589,8 +676,19 @@ def check_home(store, lookup=None, threshold: int = 3, force: bool = False,
     check.brand = router_brand(check.page, maker(net.gateway_mac))
     found = {mac: ip for ip, mac in neighbours}
     found.setdefault(net.mac, net.ip)
-    devices = [Device(mac, ip, maker(mac), daily["names"].get(ip) or daily["ssdp"].get(ip, ""))
-               for mac, ip in found.items() if mac]
+    check.clues = daily.get("clues", {})  # answers cached by 0.14.0 lack them
+    check.router_model = router_model(check.page, check.clues.get(net.gateway) or {})
+    if check.router_model:  # the catalog is shared with Windows updates' daily download
+        from atlas.softwareupdates import kev_catalog
+
+        vendor = f"{check.brand[0] if check.brand else ''} {maker(net.gateway_mac)} {check.router_model}"
+        check.router_holes = router_holes(check.router_model, vendor, kev_catalog(store, years=None))
+
+    def clue(ip: str, key: str) -> str:
+        return (check.clues.get(ip) or {}).get(key) or ""
+
+    devices = [Device(mac, ip, maker(mac), clue(ip, "name") or daily["names"].get(ip) or daily["ssdp"].get(ip, ""),
+                      model=clue(ip, "model")) for mac, ip in found.items() if mac]
     for d in devices:
         d.role = "Router" if d.mac == net.gateway_mac else "This PC" if d.mac == net.mac else ""
         if d.role == "This PC":
@@ -616,7 +714,7 @@ def summary(check: HomeCheck) -> str:
         return "Not connected to a network."
     if check.findings and check.findings[0].key == "homenet:ask":
         return check.findings[0].title
-    router = check.brand[0] if check.brand else "Router"
+    router = check.router_model or (check.brand[0] if check.brand else "Router")
     look = sum(1 for f in check.findings if f.level == WARN)
     return (f"{router} at {net.gateway}  ·  {len(check.devices)} device(s) seen  ·  "
             + (f"{look} need a look" if look else "nothing needs a look")
@@ -626,5 +724,7 @@ def summary(check: HomeCheck) -> str:
 def as_json(check: HomeCheck) -> str:
     """For `atlas home --json`."""
     return json.dumps({"network": check.network.__dict__ if check.network else None,
+                       "router": {"brand": check.brand[0] if check.brand else None, "model": check.router_model,
+                                  "exploited_flaws": [e["cveID"] for e in check.router_holes]},
                        "devices": [d.__dict__ | {"label": d.label} for d in check.devices],
                        "findings": [f.__dict__ for f in check.findings]}, indent=2, default=str)

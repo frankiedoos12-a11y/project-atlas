@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Project Atlas Link Checker",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "description": "Warns before you open a dangerous link, using Project Atlas and VirusTotal on your own PC.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1nSoQZYPhC4EgNbiJA0oeM7Z+FbgiqLJlVWFV74p8W5Joj/cIBa03VpPgaKgvBKushT5lY/8GwfdFXho7o/cNcIkcUie3N//O0Fw+kxhiMiwEv76nu6K6fdbxCbmHAH+yqi1HpqnhvmgGLa+zsU/pbO9wFQ+AwbXqVWLto5ITW0Ly1JirwqAyGfPVpQQlucsvk8tsbFCr17s0s1ZUAgBt7LyYc8wuuKZptVgvNBJf5rdkGm7aQRwkdWh3aWusMhwG7sf6HsPaUIsWMyeh/I1Smp83wjQhz2/9DpMkx5QLGvmctyeo9QYx8a416zwU1rNO0aTavB7Ajr66Ek0RwITwwIDAQAB",
   "minimum_chrome_version": "116",
