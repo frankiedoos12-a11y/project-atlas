@@ -200,7 +200,19 @@ The **Full scan** tab checks every program file on your drives (programs, DLLs, 
 
 ### Scam check
 
-Got an email, text or pop-up you're not sure about? Paste it into **Online safety > Message and link check** (or `atlas scam-check`). Atlas looks for the usual scam tricks and explains each one it finds, quoting the words: asking for remote access, gift cards, crypto or wire payments, codes or passwords, "call this number", fake invoices and renewals, threats from the "police" or "IRS", virus scares, blackmail, prizes, unpaid tolls and parcels, secrecy and pressure. Every link in the message is checked like the link checker does. It answers *Looks like a scam*, *Be careful* or *Nothing obvious found*. Rules only, no AI service: the message stays on the PC, and only its links go to VirusTotal.
+Got an email, text or pop-up you're not sure about? Paste it into **Online safety > Message and link check** (or `atlas scam-check`). Atlas looks for the usual scam tricks and explains each one it finds, quoting the words: asking for remote access, gift cards, crypto or wire payments, codes or passwords, "call this number", fake invoices and renewals, threats from the "police" or "IRS", virus scares, fake security pop-ups ("Your PC is blocked, call Microsoft"), blackmail, prizes, unpaid tolls and parcels, secrecy and pressure. Every link in the message is checked like the link checker does. It answers *Looks like a scam*, *Be careful* or *Nothing obvious found*. Rules only, no AI service: the message stays on the PC, and only its links go to VirusTotal.
+
+**Screenshots.** A pop-up or a text message is often easier to screenshot than to copy: press Win+Shift+S, then **Paste**. Atlas reads the words with Windows' own text recognition, on the PC, and checks them the same way. **Open email or screenshot...** reads a picture file too (a phone screenshot you've copied over).
+
+**Email files.** Pasting loses what gives an email away, so open the email itself: drop an `.eml` or `.msg` file on the message box, click **Open email or screenshot...**, or right-click the file > *Scan with Project Atlas*. To get the file: in Outlook on the PC, drag the email to the desktop; in Gmail, *⋮ > Download message*; in Outlook on the web, *⋯ > Save > Save as*. Besides the wording, Atlas checks:
+
+- **Links that aren't what they say:** the text shows `microsoft.com` but the link goes elsewhere (Outlook Safe Links and Google redirects are unwrapped first; newsletter tracking links are left alone). Every real link target is checked like the link checker does.
+- **The sender:** a display name like *Microsoft Support* or *PayPal* sent from a domain that isn't the company's, or from a free Gmail/Outlook address, and a *Reply-To* that sends your answer somewhere else.
+- **Sender checks:** whether the email failed the SPF, DKIM or DMARC checks your mail provider recorded when it arrived.
+- **The sender's domain:** brand-new domains and ones security vendors list as phishing.
+- **Attachments:** risky kinds (programs, scripts, HTML and SVG pages, disk images) and each attachment's SHA-256 on VirusTotal. Attachments are never opened or saved.
+
+Only links, the sender's domain and attachment fingerprints go to VirusTotal; the email itself stays on the PC.
 
 ## 8. Installed programs
 
@@ -356,7 +368,7 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 ## Privacy
 
-`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal), and the weekly report never leaves the PC. The shared allow-list is downloaded whole from GitHub, so it sends nothing about you, and *Report a mistake* sends nothing itself: it opens a report you read and send.
+`upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal); for an email file also the sender's domain and attachment fingerprints, and screenshots are read on the PC by Windows' own text recognition. And the weekly report never leaves the PC. The shared allow-list is downloaded whole from GitHub, so it sends nothing about you, and *Report a mistake* sends nothing itself: it opens a report you read and send.
 
 ## Development
 

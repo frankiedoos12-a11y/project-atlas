@@ -56,6 +56,13 @@ RULES = [
     _rule("Virus scare", 2, "Pop-ups and calls saying your PC is infected are scams. Windows and Atlas don't phone "
           "you.", r"(?:computer|pc|device|phone) (?:is|has been|was) (?:infected|hacked|compromised|locked)",
           r"virus(?:es)? (?:detected|found)", r"trojan", r"spyware", r"hackers? (?:have|has|got)"),
+    _rule("Fake security pop-up", 3, "Real Windows and Defender warnings never show a phone number, never lock "
+          "your PC and never tell you not to restart. Close the browser (Ctrl+Shift+Esc > End task if it won't "
+          "close) and don't call.",
+          r"(?:windows|microsoft|defender|apple|mac) (?:defender )?(?:security|firewall|virus) (?:alert|warning)",
+          r"(?:pc|computer|device|access|browser) (?:is|has been|was|will be) blocked",
+          r"(?:do not|don't|dont) (?:restart|shut ?down|turn off|close this)",
+          r"call (?:microsoft|windows|apple|technical|tech) (?:support|help ?desk)"),
     _rule("Blackmail", 4, "\"I recorded you\" emails are mass-mailed blackmail. They have nothing; don't pay or reply.",
           r"recorded you", r"your webcam", r"compromising (?:video|photos?)", r"intimate (?:video|photos?)"),
     _rule("Prize or money for nothing", 2, "You can't win a contest you didn't enter, and real prizes don't cost a "
@@ -87,6 +94,7 @@ class Reason:
     title: str
     why: str
     quote: str
+    points: int | None = None  # its own weight (email and screenshot checks); None = the rule's weight
 
 
 @dataclass
@@ -96,6 +104,7 @@ class ScamCheck:
     reasons: list[Reason] = field(default_factory=list)
     links: list[LinkCheck] = field(default_factory=list)
     skipped_links: int = 0
+    about: list[tuple[str, str]] = field(default_factory=list)  # e.g. ("From", "..."), shown above the reasons
 
 
 def links_in(text: str) -> list[str]:
@@ -128,13 +137,17 @@ def word_reasons(text: str) -> list[Reason]:
 
 
 def weight(reason: Reason) -> int:
+    if reason.points is not None:
+        return reason.points
     return next((r.weight for r in RULES if r.title == reason.title), 2)
 
 
-def check_message(text: str, scanner=None) -> ScamCheck:
-    result = ScamCheck(reasons=word_reasons(text))
+def check_message(text: str, scanner=None, links: list[str] | None = None, extra: list[Reason] = ()) -> ScamCheck:
+    """`links` replaces the links found in the text (an email's real link targets); `extra` adds reasons found
+    elsewhere (the sender, sign-in checks, attachments)."""
+    result = ScamCheck(reasons=list(extra) + word_reasons(text))
     result.score = sum(weight(r) for r in result.reasons)
-    urls = links_in(text)
+    urls = links_in(text) if links is None else links
     result.skipped_links = max(0, len(urls) - MAX_LINKS)
     for url in urls[:MAX_LINKS]:
         link = check_link(scanner, url)

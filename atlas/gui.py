@@ -99,6 +99,23 @@ def report_mistake(parent, kind: str, what: str, verdict: str, reasons: list[str
     webbrowser.open(mistakes.issue_url(kind, what, verdict, reasons))
 
 
+def scam_lines(result) -> list[tuple[str, str, str | None]]:
+    """A message or email check for a DetailBox."""
+    from atlas import scam
+
+    tag = {scam.SCAM: "malicious", scam.CAREFUL: "suspicious"}.get(result.verdict, "clean")
+    lines = [("Verdict", result.verdict.upper(), tag), ("", scam.summary(result), None)]
+    lines += [(label, value, None) for label, value in result.about]
+    for r in result.reasons:
+        lines += [(r.title, r.why, None), ("", f"    \u201c{r.quote}\u201d", None)]
+    for link in result.links:
+        lines.append(("Link", f"{link.url}: {link.verdict.value}" +
+                      (f" ({link.reasons[0]})" if link.reasons else ""), link.verdict.value))
+    if result.skipped_links:
+        lines.append(("", f"{result.skipped_links} more links weren't checked.", None))
+    return lines
+
+
 class Table(ttk.Frame):
     """A Treeview with a scrollbar, clickable sortable headings and verdict colours."""
 
@@ -195,6 +212,7 @@ def style_window(root: tk.Tk, scale: float) -> None:
     style.configure("Update.TLabel", foreground="#1d4ed8", background="#ffffff", font=("Segoe UI", 10, "bold"))
     style.configure("Section.TLabel", background="#ffffff", font=("Segoe UI Semibold", 12))
     style.configure("Heading.TLabel", font=("Segoe UI Semibold", 12))
+    style.configure("Hint.TLabel", foreground="#666666")
     style.configure("RowTitle.TLabel", background="#ffffff", font=("Segoe UI Semibold", 10))
     style.configure("OnBody.TLabel", background="#ffffff", foreground="#2e7d32", font=("Segoe UI", 10))
     style.configure("Bang.TLabel", background="#ffffff", foreground=VERDICT_COLORS["suspicious"],
@@ -2139,25 +2157,53 @@ class AtlasWindow:
 
     def _build_scam_tab(self, parent) -> ttk.Frame:
         tab = ttk.Frame(parent, padding=10)
+        self._fit(ttk.Label(tab, style="Summary.TLabel",
+                  text="Got an email, text or pop-up you're not sure about? Paste the text or a screenshot "
+                       "(Win+Shift+S), or open the email itself: it shows Atlas the real links, sender and "
+                       "attachments. Atlas looks for the usual scam tricks and checks links with VirusTotal. "
+                       "Nothing else leaves this PC."))
         bar = ttk.Frame(tab)
-        bar.pack(fill="x")
-        ttk.Label(bar, style="Summary.TLabel", wraplength=int(800 * self.scale),
-                  text="Got an email, text or pop-up you're not sure about? Paste it below and click Check. Atlas "
-                       "looks for the usual scam tricks and checks its links with VirusTotal. Nothing else leaves "
-                       "this PC.").pack(side="left", fill="x", expand=True)
+        bar.pack(fill="x", pady=(8, 0))
+        ttk.Button(bar, text="Open email or screenshot...", command=self._open_message_file).pack(side="left")
+        ttk.Button(bar, text="Paste", command=self._paste_scam).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="Clear", command=self._clear_scam).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="Check", command=self.check_scam).pack(side="right")
-        ttk.Button(bar, text="Clear", command=lambda: (self.scam_text.delete("1.0", "end"),
-                                                       self.scam_detail.show([]))).pack(side="right", padx=(0, 6))
-        ttk.Button(bar, text="Paste", command=self._paste_scam).pack(side="right", padx=(0, 6))
+        self._fit(ttk.Label(tab, style="Hint.TLabel",
+                  text="Getting an email file: in Outlook on the PC, drag the email to the desktop. In Gmail: "
+                       "\u22ee > Download message. In Outlook on the web: \u22ef > Save > Save as. Then drop the file "
+                       "on the box below, or click Open."), pady=(6, 0))
         panes = ttk.PanedWindow(tab, orient="vertical")
         panes.pack(fill="both", expand=True, pady=(8, 0))
         self.scam_text = tk.Text(panes, height=8, wrap="word", font=("Segoe UI", 10), padx=10, pady=8, undo=True)
         panes.add(self.scam_text, weight=1)
         self.scam_detail = DetailBox(panes)
         panes.add(self.scam_detail, weight=2)
+        from atlas import dropfiles
+
+        self.root.after(200, lambda: dropfiles.accept_files(self.scam_text, self._message_files))
         return tab
 
+    @staticmethod
+    def _fit(label: ttk.Label, pady=0) -> None:
+        """Pack a label that wraps to the width it's given, whatever the window size."""
+        label.pack(fill="x", anchor="w", pady=pady)
+        label.bind("<Configure>", lambda e: label.configure(wraplength=max(100, e.width - 4)))
+
+    def _clear_scam(self) -> None:
+        self.scam_text.delete("1.0", "end")
+        self.scam_detail.show([])
+
     def _paste_scam(self) -> None:
+        """Text, or a screenshot on the clipboard (read with Windows' text recognition)."""
+        from atlas import ocr
+
+        try:
+            image = ocr.clipboard_image()
+        except Exception:  # an odd clipboard format: fall back to text
+            image = None
+        if image is not None:
+            self._read_screenshot(lambda: ocr.read_image(image))
+            return
         try:
             text = self.root.clipboard_get()
         except tk.TclError:
@@ -2166,30 +2212,85 @@ class AtlasWindow:
         self.scam_text.insert("1.0", text)
         self.check_scam()
 
+    def _read_screenshot(self, read: Callable[[], str]) -> None:
+        from atlas import ocr
+
+        self.show_tab("Message and link check")
+        self.scam_detail.show([("", "Reading the screenshot...", None)])
+
+        def work():
+            try:
+                return read()
+            except (ocr.OcrError, OSError) as exc:
+                return exc
+
+        def done(text) -> None:
+            if isinstance(text, Exception) or not text:
+                self.scam_detail.show([("", f"Couldn't read any words in that picture. {text or ''}", None)])
+                return
+            self.scam_text.delete("1.0", "end")
+            self.scam_text.insert("1.0", text)
+            self.check_scam()
+
+        self.in_background(work, done)
+
+    def _open_message_file(self) -> None:
+        from tkinter import filedialog
+
+        path = filedialog.askopenfilename(parent=self.root, title="Open an email or a screenshot", filetypes=[
+            ("Emails and screenshots", "*.eml *.msg *.png *.jpg *.jpeg *.bmp *.gif"), ("Emails", "*.eml *.msg"),
+            ("Pictures", "*.png *.jpg *.jpeg *.bmp *.gif"), ("All files", "*.*")])
+        if path:
+            self._message_files([path])
+
+    def _message_files(self, paths: list[str]) -> None:
+        """An email file or a picture, opened or dropped on the message box."""
+        from atlas import emailcheck, ocr
+
+        path = Path(paths[0])
+        suffix = path.suffix.lower()
+        if suffix in ocr.IMAGE_TYPES:
+            self._read_screenshot(lambda: ocr.read_file(path))
+        elif suffix in emailcheck.EMAIL_TYPES:
+            self.check_email(path)
+        else:
+            messagebox.showinfo(WINDOW_TITLE, "Drop an email file (.eml or .msg) or a screenshot here. To check "
+                                              "a program or document, right-click it > Scan with Project Atlas.")
+
+    def check_email(self, path: Path) -> None:
+        from atlas import emailcheck
+
+        self.show_tab("Message and link check")
+        self.scam_text.delete("1.0", "end")
+        self.scam_text.insert("1.0", f"Email file: {path}")
+        self.scam_detail.show([("", f"Checking {path.name}...", None)])
+
+        def work():
+            try:
+                return emailcheck.check_email(path, self.scanner)
+            except (OSError, ValueError) as exc:
+                return exc
+
+        def done(result) -> None:
+            if isinstance(result, Exception):
+                self.scam_detail.show([("", f"Couldn't read that email: {result}", None)])
+            elif result is not None:
+                self.scam_detail.show(scam_lines(result))
+
+        self.in_background(work, done)
+
     def check_scam(self) -> None:
         from atlas import scam
 
         text = self.scam_text.get("1.0", "end").strip()
         if not text:
             return
+        if text.startswith("Email file: ") and "\n" not in text:
+            self.check_email(Path(text.removeprefix("Email file: ")))
+            return
         self.scam_detail.show([("", "Checking...", None)])
-
-        def done(result) -> None:
-            if result is None:
-                return
-            tag = {scam.SCAM: "malicious", scam.CAREFUL: "suspicious"}.get(result.verdict, "clean")
-            lines = [("Verdict", result.verdict.upper(), tag), ("", scam.summary(result), None)]
-            for r in result.reasons:
-                lines += [(r.title, r.why, None), ("", f"    \u201c{r.quote}\u201d", None)]
-            for link in result.links:
-                lines.append(("Link", f"{link.url}: {link.verdict.value}" +
-                              (f" ({link.reasons[0]})" if link.reasons else ""), link.verdict.value))
-            if result.skipped_links:
-                lines.append(("", f"{result.skipped_links} more links weren't checked.", None))
-            self.scam_detail.show(lines)
-
-        self.in_background(lambda: scam.check_message(text, self.scanner), done)
-
+        self.in_background(lambda: scam.check_message(text, self.scanner),
+                           lambda result: result is not None and self.scam_detail.show(scam_lines(result)))
 
     def _build_hunt_tab(self, parent) -> ttk.Frame:
         tab = ttk.Frame(parent, padding=10)
@@ -2431,9 +2532,16 @@ def _bring_existing_window_forward() -> bool:
 
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--scan":  # from Explorer's right-click menu
+        from atlas.emailcheck import EMAIL_TYPES
+
+        paths = sys.argv[2:]
+        if paths and all(Path(p).suffix.lower() in EMAIL_TYPES for p in paths):  # emails: is it a scam?
+            from atlas.messagewindow import main as message_main
+
+            return message_main(paths)
         from atlas.scanwindow import main as scan_main
 
-        return scan_main(sys.argv[2:])
+        return scan_main(paths)
     if _bring_existing_window_forward():
         return 0
     if sys.platform == "win32":
