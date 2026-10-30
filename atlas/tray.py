@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from collections.abc import Callable
 import pystray
 from PIL import Image, ImageDraw
 
-from atlas import __version__, autostart, config, contextmenu, unelevate
+from atlas import __version__, autostart, config, contextmenu, service, unelevate
 from atlas.app import (build_scanner, claim_single_instance, launch_gui, log_file, setup_logging, tray_command,
                        watch_folders)
 from atlas.autoruns import Autorun, AutorunMonitor
@@ -212,6 +213,7 @@ class AtlasTray:
         self._update_stop = threading.Event()
         self.alert: str | None = None
         self.busy: str | None = None
+        self._resume: threading.Timer | None = None
         self.icon = pystray.Icon("ProjectAtlas", make_icon("ok"), "Project Atlas", menu=self._menu())
 
     # --- Menu ----------------------------------------------------------------
@@ -231,7 +233,8 @@ class AtlasTray:
             item(lambda _: f"Update to Project Atlas {self.update_available}", self._update,
                  visible=lambda _: self.update_available is not None),
             pystray.Menu.SEPARATOR,
-            item("Pause protection", self._toggle_pause, checked=lambda _: self.guard.paused),
+            item(lambda _: "Pause protection for an hour" if service.installed() else "Pause protection",
+                 self._toggle_pause, checked=lambda _: self.guard.paused),
             item("Check startup items now", self._check_autoruns, enabled=lambda _: self.monitor is not None),
             item("Check running programs and network now", self._check_running),
             item("Check Defender, browsers, network settings and threat hunt now", self._check_system),
@@ -242,7 +245,10 @@ class AtlasTray:
             item("Open quarantine folder", lambda: os.startfile(quarantine_dir(config.data_dir()))),
             item("Open settings file", lambda: os.startfile(config.config_dir() / "config.json")),
             pystray.Menu.SEPARATOR,
-            item("Start with Windows", self._toggle_autostart, checked=lambda _: autostart.is_enabled()),
+            item(lambda _: "Start with Windows (kept on by the Atlas service)" if service.installed()
+                 else "Start with Windows", self._toggle_autostart,
+                 checked=lambda _: service.installed() or autostart.is_enabled(),
+                 enabled=lambda _: not service.installed()),
             item('"Scan with Project Atlas" in right-click menu', self._toggle_context_menu,
                  checked=lambda _: contextmenu.is_enabled()),
             item("Quit Project Atlas", self._quit),
@@ -326,8 +332,15 @@ class AtlasTray:
         self.alert = None
         self._refresh()
 
-    def _toggle_pause(self, icon, item) -> None:
+    def _toggle_pause(self, icon=None, item=None) -> None:
+        if self._resume:
+            self._resume.cancel()
+            self._resume = None
         self.guard.paused = not self.guard.paused
+        if self.guard.paused and service.installed():  # with the service, a pause can't last forever
+            self._resume = threading.Timer(service.PAUSE_MINUTES * 60, self._resume_after_pause)
+            self._resume.daemon = True
+            self._resume.start()
         if self.monitor:
             self.monitor.paused = self.guard.paused
         self.running.paused = self.guard.paused
@@ -336,6 +349,12 @@ class AtlasTray:
             self.new_programs.paused = self.guard.paused
         log.info("Protection %s", "paused" if self.guard.paused else "resumed")
         self._refresh()
+
+    def _resume_after_pause(self) -> None:
+        self._resume = None
+        if self.guard.paused:
+            self._toggle_pause()
+            toast("Atlas: protection is back on", "The hour's pause is over.")
 
     def _check_autoruns(self, icon, item) -> None:
         if self.monitor:
@@ -391,6 +410,18 @@ class AtlasTray:
         self._refresh()
 
     def _quit(self, icon, item) -> None:
+        if service.installed():  # the service would start it again: ask an administrator first
+            def ask():
+                if service.ask_to_quit():
+                    self._stop(icon)
+                else:
+                    toast("Atlas: still protecting", "Quitting needs an administrator's approval. To stop Atlas "
+                          "for a while, choose Pause protection for an hour.")
+            threading.Thread(target=ask, daemon=True).start()
+            return
+        self._stop(icon)
+
+    def _stop(self, icon) -> None:
         log.info("Project Atlas tray stopped")
         self.guard.stop()
         if self.monitor:
@@ -430,5 +461,11 @@ def main() -> int:
     if not claim_single_instance():
         toast("Project Atlas is already running", "Look for the globe icon by the clock (it may be under ^).")
         return 1
-    AtlasTray().run()
+    service.remember_tray(tray_command())
+    tray = AtlasTray()
+    if "--restarted" in sys.argv:
+        log.warning("Started again by the Atlas service: the tray had stopped")
+        toast("Atlas was stopped, and has started again", "Project Atlas was closed or ended without an "
+              "administrator's approval, so its service started it again.", loud=True)
+    tray.run()
     return 0

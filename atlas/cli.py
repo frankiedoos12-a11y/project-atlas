@@ -724,8 +724,48 @@ def cmd_autostart(args) -> int:
     if args.state == "off":
         autostart.disable()
         print("Project Atlas will no longer start at sign-in.")
+        from atlas import service
+
+        if service.installed():
+            print("The Atlas service still starts it. To stop that: atlas service uninstall (administrator).")
     else:
         print(f"Project Atlas will start in the tray at sign-in (shortcut: {autostart.enable()}).")
+    return 0
+
+
+def cmd_service(args) -> int:
+    from atlas import service, unelevate
+
+    if args.action == "status":
+        print(f"Project Atlas Service: {service.state()}")
+        if service.installed():
+            print("It starts the tray again if it's quit without an administrator's approval, crashes or is ended.")
+        else:
+            print("Install it (administrator) with: atlas service install")
+        return 0
+    if not unelevate.is_elevated():
+        words = ["service", args.action] + (["--session", str(args.session)] if args.session is not None else [])             + (["--dev"] if args.dev else [])
+        code = service.run_as_admin(service.cli_command(*words))
+        if code is None:
+            print("This needs an administrator's approval, and Windows didn't get it.")
+            return 1
+        if args.action != "allow-quit":
+            print(f"Project Atlas Service: {service.state()}")
+        return code
+    try:
+        if args.action == "install":
+            print(f"Project Atlas Service installed: {service.install(dev=args.dev)}")
+        elif args.action == "uninstall":
+            service.uninstall()
+            print("Project Atlas Service removed. The tray now runs only while you keep it open.")
+        else:
+            if args.session is None:
+                print("Which session? (--session N)")
+                return 2
+            service.allow_quit(args.session)
+    except (OSError, RuntimeError) as e:
+        print(f"Couldn't do it: {e}")
+        return 1
     return 0
 
 
@@ -779,6 +819,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("guard", help="run protection in this console window")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_guard)
+
+    p = sub.add_parser("service", help="the service that keeps Atlas running (install and uninstall need an "
+                                       "administrator)")
+    p.add_argument("action", choices=["status", "install", "uninstall", "allow-quit"])
+    p.add_argument("--session", type=int, help=argparse.SUPPRESS)
+    p.add_argument("--dev", action="store_true", help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_service)
 
     sub.add_parser("set-key", help="store your VirusTotal API key").set_defaults(func=cmd_set_key)
 

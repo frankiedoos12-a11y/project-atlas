@@ -20,3 +20,12 @@ cli_exe = EXE(PYZ(cli.pure), cli.scripts, exclude_binaries=True, name="atlas", i
               console=True, version="build/version.txt")
 
 COLLECT(app_exe, cli_exe, app.binaries, app.datas, cli.binaries, cli.datas, name="ProjectAtlas")
+
+# The service (ProjectAtlasService.exe) gets its own small folder: `atlas service install` copies it to
+# Program Files, where only administrators can change it. It only needs Python's standard library.
+service = Analysis(["service_main.py"], pathex=[".."], excludes=["pytest", "tkinter", "PIL", "requests",
+                                                                  "watchdog", "keyring", "pystray", "psutil",
+                                                                  "ssl", "_ssl", "lzma", "bz2", "_decimal"])
+service_exe = EXE(PYZ(service.pure), service.scripts, exclude_binaries=True, name="ProjectAtlasService", icon=icon,
+                  console=True, version="build/version.txt")
+COLLECT(service_exe, service.binaries, service.datas, name="ProjectAtlasService")

@@ -7,7 +7,7 @@ VirusTotal-powered protection for Windows 11. It runs **alongside** Windows Defe
 **[Download ProjectAtlas-Setup.exe](https://github.com/frankiedoos12-a11y/project-atlas/releases/latest/download/ProjectAtlas-Setup.exe)** and open it. It needs no administrator rights and no Python, works on Windows 10 and 11 (64-bit), and puts **Project Atlas** on your desktop and in the Start menu.
 
 1. Windows may say **"Windows protected your PC"**, because Atlas is new and isn't code-signed yet. Click **More info**, then **Run anyway**.
-2. Pick the options you want (all are on by default) and click **Install**.
+2. Pick the options you want (all are on by default) and click **Install**. *Keep protection running* asks for administrator approval once: see [The Atlas service](#the-atlas-service).
 3. Atlas opens. Click **Add VirusTotal key...** at the top right and follow the steps: the key is free, and each PC keeps its own in Windows Credential Manager.
 
 - **Update:** when there's a new version, Atlas offers **Update now** (in the window and the tray menu). Or download and run the newest setup again. Settings, history and your key are kept.
@@ -43,6 +43,17 @@ After installing you don't need to start anything: **Atlas is already running**,
 The setup (`ProjectAtlas-Setup.exe`) puts **Project Atlas** on the desktop too. It doesn't add `atlas` to terminals or a separate tray shortcut: the window's **Start protection** button starts the tray, and the commands are in `%LOCALAPPDATA%\Programs\Project Atlas\atlas.exe`.
 
 The tray and the window never run as administrator. If you start them from an administrator terminal, they restart themselves with your normal rights. Windows blocks dragging files into an administrator window, and the window opens untrusted files such as emails. The few features that need administrator rights ask Windows for them: the deep check, Defender's full and offline scans, and Defender's extra protection.
+
+### The Atlas service
+
+Protection runs in the tray, so it used to stop if someone chose *Quit*, ended Atlas in Task Manager, or it crashed. The installer's **Keep protection running** option (on by default, needs administrator approval once) adds a small Windows service that prevents that:
+
+- Every 15 seconds it checks that each signed-in person who uses Atlas has the tray running. If not, it starts the tray again within about a minute, and the tray says it was restarted.
+- **Quit** then asks for an administrator's approval (the Windows prompt). Without it, Atlas keeps running: choose *Pause protection for an hour* instead. An approved Quit lasts until that person signs out.
+- *Start with Windows* is always on while the service is installed.
+- The service does nothing else. The checks stay in the tray with your normal rights, so Atlas never opens a download or an email with full control of the PC. The service's own program is copied to `C:\Program Files\Project Atlas Service`, which only administrators can change, and it always starts the tray with the signed-in person's own rights.
+- It uses almost no memory or processor time: one quick look every 15 seconds.
+- Commands: `atlas service status`, and `atlas service install` or `atlas service uninstall` (both ask for an administrator). Uninstalling Atlas removes the service too.
 
 What Atlas does:
 
@@ -354,16 +365,16 @@ The globe is **blue** while protecting, **grey** while paused, and **red** after
 
 - Open Project Atlas
 - *Health score: N/100* (after the first hourly check), *Protection and threat hunt: N thing(s) need a look* (when there are any) and *Update to Project Atlas X* (when there's an update)
-- Pause protection
+- Pause protection (*for an hour* while the Atlas service is installed)
 - Check startup items now
 - Check running programs and network now
 - Check Defender, browsers, network settings and threat hunt now
 - Scan watched folders now
 - Check link on clipboard
 - Open activity log / quarantine folder / settings file
-- Start with Windows
+- Start with Windows (always on while the Atlas service is installed)
 - "Scan with Project Atlas" in right-click menu
-- Quit
+- Quit (needs an administrator's approval while the Atlas service is installed)
 
 ## Commands
 
@@ -399,6 +410,7 @@ Type these in any PowerShell or Command Prompt window, from any folder (open a n
 | `atlas restore ID` | Put a quarantined file back (asks first) |
 | `atlas config` | Show settings and where they live |
 | `atlas autostart on/off` | Start Atlas in the tray at sign-in |
+| `atlas service status/install/uninstall` | The service that keeps the tray running (install and uninstall ask for an administrator) |
 | `atlas context-menu on/off` | Add or remove "Scan with Project Atlas" in Explorer's right-click menu |
 | `atlas browser-extension on/off` | Connect or disconnect the browser extension's helper |
 
