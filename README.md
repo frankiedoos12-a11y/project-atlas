@@ -428,6 +428,43 @@ Only one copy of Atlas protection (tray or `guard`) runs at a time.
 
 `upload_unknown_files` is **off** by default. Files uploaded to VirusTotal can be downloaded by every VirusTotal Intelligence subscriber, so only turn it on if you're comfortable with that for everything in your watched folders. Download links are stored and shown without their query strings, which often hold temporary access tokens. The threat hunt reads your browsers' history only to match it against threat intel on this PC; history never leaves the PC, and neither do the Google Threat Intelligence reports downloaded with your key. The update check sends nothing about your PC: winget compares your programs against its catalog, and CISA's catalog is downloaded whole. The password check sends only 5 characters of the password's hash. The scam check sends only the message's links (to VirusTotal); for an email file also the sender's domain and attachment fingerprints, and screenshots are read on the PC by Windows' own text recognition. And the weekly report never leaves the PC. The shared allow-list is downloaded whole from GitHub, so it sends nothing about you, and *Report a mistake* sends nothing itself: it opens a report you read and send.
 
+## Android app (early)
+
+The `android` folder holds Project Atlas for Android (Android 8 and later), a small Kotlin app with no libraries. Its first release is 0.5.0 (tag `android-v0.5.0`); it's on its way to F-Droid.
+
+- **Works without a key:** Atlas ships threat data for known stalkerware and monitoring apps: their app fingerprints, signing certificates, package names and websites. It comes from [Stalkerware indicators](https://github.com/AssoEchap/stalkerware-indicators) by Echap (CC BY 4.0), plus the newest Android malware from [MalwareBazaar](https://bazaar.abuse.ch) by abuse.ch (CC0) when the repository has an `ABUSE_CH_KEY` secret (a free abuse.ch account key). `android/tools/build_intel.py` builds it; a weekly workflow keeps it current in the repository, and the app fetches a newer copy once a week. The app check, file checks, downloads and scam checks all use it.
+- **App check:** every app you installed, riskiest first. It looks at:
+  - where the app came from: an app store, or a downloaded file
+  - accessibility access, device administrator rights and notification access
+  - whether it hides its icon
+  - powerful permissions such as reading text messages or drawing over other apps
+  - its fingerprint on VirusTotal, using your own key
+  
+  Apps from outside a store with spyware-like access need a look. Tapping an app shows why, with buttons to its settings page (where you can uninstall it) and its VirusTotal page. Atlas never removes anything itself.
+- **Protection:** a health score out of 100, worked out as on Windows, from the phone's own settings:
+  - screen lock, and the age of the last security update
+  - USB debugging, and Private DNS
+  - security certificates you or an app added (whoever owns one can read your encrypted traffic)
+  - signs of root, and an unlocked bootloader
+  - apps with accessibility access or device administrator rights, and apps the app check says need a look
+  - data use per app over the last 7 days (with *Usage access*); an app that sent a lot in the background without being opened is flagged
+
+  Each finding explains why it matters, with a button to the Android settings page that fixes it.
+- **Automatic checks** (on by default; switch them off on the Protection screen): Android wakes Atlas when a new file lands in shared storage, to check downloads; every 15 minutes Atlas asks Android which apps changed (usually none, so it stops at once); and once a day, on a battery that isn't low, it runs the Protection checks and fetches newer threat data. Atlas alerts you when something needs a look; each newly installed app that checks out fine gets a quiet "checked" note (no sound or pop-up; updates stay silent).
+- **Scam check:** *Check a message*, or share a message to Atlas. The Windows scam rules (pressure, gift cards, crypto, "call this number", remote access, fake invoices, toll and parcel texts, and more) run on the phone; each link is checked with VirusTotal and can raise the verdict. Only the links leave the phone.
+- **Scam alerts for texts** (switch on from the Protection screen, with notification access): Atlas runs the scam rules on each new message from your texting, chat and email apps, on the phone, and warns you when one looks like a scam. Messages are never saved or sent anywhere; with a VirusTotal key, only the links in a message that already shows a sign are looked up.
+- **Password check:** has a password appeared in a data leak? Only the first 5 characters of its SHA-1 fingerprint are sent to Have I Been Pwned; the rest is compared on the phone, and nothing is saved.
+- **Storage:** how much space the phone has, how much each app takes (app, data and cache), and the apps you haven't opened in 3 months, biggest first. Tapping an app opens its settings, where you clear its cache, uninstall it, or switch off one that came with the phone. It needs *Usage access*, which you switch on.
+- **Photos and videos:** identical copies (Atlas keeps the camera's own copy, or the oldest) and the biggest files. Only files of exactly the same size are read, first just their start and end. *Move to trash* asks Android, which shows its own question; the trash keeps files for 30 days.
+- **Files and downloads:** with *All files access* (which you switch on), the same for everything in the phone's shared storage, plus a malware check of app files, programs, archives and documents. App files are checked first, and only each file's fingerprint is sent to VirusTotal. Other apps' private folders stay out of reach: Android keeps them from every app.
+- **Paid keys:** tick *Paid key* with a Premium or Enterprise VirusTotal key, and lookups aren't limited to 4 a minute.
+- **Share to scan:** share a message, link or file to *Project Atlas* from any app. Links and files are checked with VirusTotal, and an app file (.apk) also shows what it would be able to do.
+- **The key:** your VirusTotal key is encrypted with a key that stays in the phone's keystore, and isn't backed up. A free key allows 4 lookups a minute, so the first full app check takes a while. Answers are kept, so later checks only look up new and updated apps.
+
+To build it, you need JDK 17 or later and the Android SDK (API 35): `cd android`, then `gradlew testDebugUnitTest assembleDebug`.
+
+**F-Droid:** the store listing is in `android/fastlane/metadata/android/en-US` (its icon is drawn by `android/tools/make_store_icon.py`), and `android/fdroid/com.projectatlas.android.yml` is a draft for F-Droid's own metadata repository. F-Droid builds each release from a tag like `android-v0.5.0` and signs it itself; Android tags don't start with `v`, so they don't trigger the Windows release.
+
 ## Development
 
 To work on Atlas from a clone instead of the installer:
@@ -462,4 +499,4 @@ The device-maker list (`atlas/oui.txt.gz`) comes from Wireshark's [manuf file](h
 ## Roadmap
 
 - Publish the browser extension to the Chrome Web Store and Edge Add-ons (no Developer mode needed)
-- Android app (Pixel 6 Pro): share-to-scan and installed-app audit
+- Android app: F-Droid, then Google Play

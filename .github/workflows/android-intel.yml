@@ -1,0 +1,37 @@
+# Once a week, rebuilds the Android app's threat data from the public stalkerware lists and commits it when it changed.
+# Phones fetch android/app/src/main/assets/intel.txt from main once a week (IntelStore.UPDATE_URL).
+name: Android threat data
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  intel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build the threat data
+        env:
+          # Optional: a free abuse.ch account key adds MalwareBazaar's newest Android malware. Without it, stalkerware only.
+          ABUSE_CH_KEY: ${{ secrets.ABUSE_CH_KEY }}
+        run: python android/tools/build_intel.py
+      - name: Commit it if it changed
+        run: |
+          if git diff --quiet -- android/app/src/main/assets/intel.txt; then echo "No change."; exit 0; fi
+          # Only the version line changed: nothing new to send to phones.
+          if [ "$(git diff -U0 -- android/app/src/main/assets/intel.txt | grep -c '^[+-][^+-]')" -le 2 ]; then
+            git checkout -- android/app/src/main/assets/intel.txt; echo "Only the date changed."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/assets/intel.txt
+          git commit -m "Android threat data: weekly update"
+          git push

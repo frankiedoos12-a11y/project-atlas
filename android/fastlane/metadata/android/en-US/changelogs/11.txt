@@ -1,0 +1,6 @@
+* Known Android malware from MalwareBazaar (when the weekly threat data has it)
+* Known stalkerware and monitoring apps are found without a VirusTotal key (threat data updates weekly)
+* Scam alerts for texts, chats and emails, checked on the phone
+* New apps are checked within about 15 minutes, with a quiet "checked" note
+* Protection: health score, security settings and data use per app
+* Password leak check

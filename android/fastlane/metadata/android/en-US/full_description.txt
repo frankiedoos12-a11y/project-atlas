@@ -1,0 +1,19 @@
+<p>Project Atlas checks your phone for the things that actually hurt people: stalkerware, apps that can take over the phone, scam texts and settings that leave it open. It explains each finding in plain words and shows you where to fix it. It never removes anything itself.</p>
+
+<p><b>Works without an account or a key</b></p>
+<ul>
+<li><b>App check:</b> every app you installed, riskiest first: where it came from, accessibility and device administrator access, hidden icons and powerful permissions. Known stalkerware and monitoring apps are recognised by their fingerprint, signing certificate or name, with built-in threat data that updates weekly.</li>
+<li><b>Protection:</b> a health score out of 100 from the phone's own settings: screen lock, security update age, USB debugging, Private DNS, added certificates, root and an unlocked bootloader, plus data use per app.</li>
+<li><b>Scam check:</b> paste or share a message, or switch on scam alerts for texts. Classic tricks (unpaid tolls and parcels, gift cards, crypto, "call this number", remote access, prizes) are recognised on the phone. Messages are never saved or sent anywhere.</li>
+<li><b>Password check:</b> has a password appeared in a data leak? Only 5 characters of its fingerprint are sent to Have I Been Pwned; the password never leaves the phone.</li>
+<li><b>Storage, photos and files:</b> apps you haven't opened in months, duplicate photos and videos, the biggest files, and app files in your downloads. Removing anything goes through Android's own "Move to trash?" question.</li>
+<li><b>Automatic checks:</b> new apps within about 15 minutes, new downloads as they arrive, and the Protection checks once a day. A notification only when something needs a look.</li>
+</ul>
+
+<p><b>Optional: your own VirusTotal key</b></p>
+<p>Add a free VirusTotal key to also check apps, files and links with about 70 antivirus engines. Only fingerprints and links are sent, never your files or messages. The key is encrypted with the phone's keystore.</p>
+
+<p><b>Light and private</b></p>
+<p>No ads, no tracking, no account, no libraries. Atlas only reads; every fix is yours, in Android's own settings. Threat data: Stalkerware indicators by Echap (CC BY 4.0), and MalwareBazaar by abuse.ch (CC0).</p>
+
+<p>Atlas is also on Windows: <a href="https://github.com/frankiedoos12-a11y/project-atlas">github.com/frankiedoos12-a11y/project-atlas</a>.</p>

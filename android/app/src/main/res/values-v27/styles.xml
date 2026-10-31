@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Atlas" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Android 8.1 and later: dark buttons on the light navigation bar. -->
+        <item name="android:colorAccent">#1565C0</item>
+        <item name="android:colorPrimary">#1565C0</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
