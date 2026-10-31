@@ -1,17 +1,12 @@
-# Draft for F-Droid's fdroiddata repository (gitlab.com/fdroid/fdroiddata): metadata/com.projectatlas.android.yml.
-# Submitting it is the maintainer's step: open a merge request there with this file, after a tag like android-v0.5.0
-# exists on GitHub. F-Droid builds the app from that tag itself and signs it with its own key.
+AntiFeatures:
+  NonFreeNet:
+    en-US: Optional VirusTotal (your own key) and Have I Been Pwned checks.
 Categories:
   - Security
 License: GPL-3.0-or-later
 AuthorName: PugTheSecurity
 SourceCode: https://github.com/frankiedoos12-a11y/project-atlas
 IssueTracker: https://github.com/frankiedoos12-a11y/project-atlas/issues
-
-# VirusTotal (with your own key) and Have I Been Pwned are optional online services that aren't free software.
-AntiFeatures:
-  NonFreeNet:
-    en-US: Optional checks with VirusTotal (needs your own key) and Have I Been Pwned's password list.
 
 AutoName: Project Atlas
 
@@ -21,13 +16,14 @@ Repo: https://github.com/frankiedoos12-a11y/project-atlas.git
 Builds:
   - versionName: 0.5.0
     versionCode: 11
-    commit: android-v0.5.0
+    commit: 610ad617e78a262988847c86ae00e708d467c201
     subdir: android/app
     gradle:
       - yes
+    scandelete:
+      - atlas/oui.txt.gz
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^android-v.*$
-UpdateCheckData: android/app/build.gradle.kts|versionCode\s*=\s*(\d+)|.|versionName\s*=\s*"([^"]+)"
 CurrentVersion: 0.5.0
 CurrentVersionCode: 11
