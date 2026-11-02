@@ -23,7 +23,16 @@ Builds:
     scandelete:
       - atlas/oui.txt.gz
 
+  - versionName: 0.6.0
+    versionCode: 12
+    commit: 98cf5988d1c2e327b684f555f6427dfe79b3dbd9
+    subdir: android/app
+    gradle:
+      - yes
+    scandelete:
+      - atlas/oui.txt.gz
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^android-v.*$
-CurrentVersion: 0.5.0
-CurrentVersionCode: 11
+CurrentVersion: 0.6.0
+CurrentVersionCode: 12
