@@ -62,6 +62,11 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="false" />
 
+        <activity
+            android:name=".CompromiseActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:exported="false" />
+
         <service
             android:name=".WatchJob"
             android:exported="false"
@@ -74,6 +79,15 @@
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- Link protection: a VPN that carries only site-name lookups, switched on by the person. -->
+        <service
+            android:name=".LinkGuard"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
         <receiver

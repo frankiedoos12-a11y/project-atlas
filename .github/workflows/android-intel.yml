@@ -1,5 +1,6 @@
 # Once a week, rebuilds the Android app's threat data from the public stalkerware lists and commits it when it changed.
-# Phones fetch android/app/src/main/assets/intel.txt from main once a week (IntelStore.UPDATE_URL).
+# Phones fetch android/app/src/main/assets/intel.txt and its signature, intel.txt.sig, from main once a week
+# (IntelStore.UPDATE_URL), and use the list only if the signature checks out against IntelStore.SIGNING_KEY.
 name: Android threat data
 
 on:
@@ -23,15 +24,24 @@ jobs:
           # Optional: a free abuse.ch account key adds MalwareBazaar's newest Android malware. Without it, stalkerware only.
           ABUSE_CH_KEY: ${{ secrets.ABUSE_CH_KEY }}
         run: python android/tools/build_intel.py
-      - name: Commit it if it changed
+      - name: Sign and commit it if it changed
+        env:
+          INTEL_SIGNING_KEY: ${{ secrets.INTEL_SIGNING_KEY }}
         run: |
           if git diff --quiet -- android/app/src/main/assets/intel.txt; then echo "No change."; exit 0; fi
           # Only the version line changed: nothing new to send to phones.
           if [ "$(git diff -U0 -- android/app/src/main/assets/intel.txt | grep -c '^[+-][^+-]')" -le 2 ]; then
             git checkout -- android/app/src/main/assets/intel.txt; echo "Only the date changed."; exit 0
           fi
+          # Phones only take a list signed with the key whose public half is in IntelStore.SIGNING_KEY.
+          if [ -z "$INTEL_SIGNING_KEY" ]; then echo "::error::The INTEL_SIGNING_KEY secret is missing."; exit 1; fi
+          umask 077
+          printf '%s\n' "$INTEL_SIGNING_KEY" > "$RUNNER_TEMP/intel-signing.pem"
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/intel-signing.pem" android/app/src/main/assets/intel.txt \
+            | base64 -w0 > android/app/src/main/assets/intel.txt.sig
+          rm -f "$RUNNER_TEMP/intel-signing.pem"
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add android/app/src/main/assets/intel.txt
+          git add android/app/src/main/assets/intel.txt android/app/src/main/assets/intel.txt.sig
           git commit -m "Android threat data: weekly update"
           git push

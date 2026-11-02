@@ -6,11 +6,19 @@ package com.projectatlas.android
  * newest Android malware by fingerprint. Built by tools/build_intel.py; the app ships a copy and fetches a newer one
  * once a week.
  */
-/** kind: "stalkerware", "watchware" (a monitoring app) or "malware" (other Android malware, from MalwareBazaar). */
+/** kind: "stalkerware", "watchware" (a monitoring app), "malware" (other Android malware, from abuse.ch) or "spyware"
+ * (commercial spyware sold to governments, such as Pegasus, from the investigations of Amnesty, Citizen Lab and others). */
 data class Family(val name: String, val kind: String) {
     val stalkerware get() = kind == "stalkerware"
     val malware get() = kind == "malware"
-    val what get() = if (malware) "Android malware" else if (stalkerware) "stalkerware" else "monitoring app"
+    val watchware get() = kind == "watchware"
+    val spyware get() = kind == "spyware"
+    val what get() = when {
+        spyware -> "commercial spyware"
+        malware -> "Android malware"
+        stalkerware -> "stalkerware"
+        else -> "monitoring app"
+    }
 }
 
 enum class Match(val strong: Boolean, val how: String) {
@@ -85,7 +93,11 @@ class Intel(
 /** What a known stalkerware or monitoring app adds to an app's verdict. */
 fun intelReason(hit: IntelHit): Pair<Verdict, String> {
     val f = hit.family
-    return if (f.malware) {
+    return if (f.spyware) {
+        Verdict.MALICIOUS to "Known commercial spyware: ${f.name} (${hit.match.how}). It's sold to governments " +
+            "to watch chosen people. Don't use this phone for anything sensitive: open the compromise check for " +
+            "what to do."
+    } else if (f.malware) {
         Verdict.MALICIOUS to "Known Android malware: ${f.name} (${hit.match.how}). Uninstall it from its App settings " +
             "(if it's a device administrator, switch that off first), then change the passwords you used on this phone."
     } else if (f.stalkerware) {

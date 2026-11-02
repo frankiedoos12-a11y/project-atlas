@@ -141,6 +141,10 @@ object Watch {
                 Intent(context, ProtectionActivity::class.java))
         }
         remember(context, findings)
+        try {
+            Compromise.daily(context)
+        } catch (e: Exception) {
+        }
     }
 
     /**
@@ -243,6 +247,8 @@ class WatchJob : JobService() {
 /** Content triggers don't survive a restart: arm the downloads watch again. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) Watch.schedule(context)
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        Watch.schedule(context)
+        LinkGuard.resume(context)
     }
 }

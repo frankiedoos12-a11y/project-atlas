@@ -125,4 +125,23 @@ class MalwareTest {
         assertEquals("stalkerware", Family("X", "stalkerware").what)
         assertEquals("monitoring app", Family("X", "watchware").what)
     }
+
+    @Test
+    fun onlyASignedListIsTaken() {
+        // The list that ships is signed with the key the app trusts.
+        val shipped = File("src/main/assets/intel.txt").readBytes()
+        val signature = File("src/main/assets/intel.txt.sig").readText().trim()
+        assertTrue(IntelStore.signed(shipped, signature))
+        // Changed by one byte, or signed by any other key, it isn't.
+        assertTrue(!IntelStore.signed(shipped + 10, signature))
+        val other = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val forged = java.security.Signature.getInstance("SHA256withECDSA").run {
+            initSign(other.private)
+            update(shipped)
+            java.util.Base64.getEncoder().encodeToString(sign())
+        }
+        assertTrue(!IntelStore.signed(shipped, forged))
+        assertTrue(IntelStore.signed(shipped, forged, java.util.Base64.getEncoder().encodeToString(other.public.encoded)))
+        assertTrue(!IntelStore.signed(shipped, "not a signature"))
+    }
 }

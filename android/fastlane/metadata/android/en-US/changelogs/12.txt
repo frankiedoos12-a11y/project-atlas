@@ -1,0 +1,4 @@
+* "Is someone watching?": a layered compromise check (start-up proof from the security chip, microphone and camera use with the screen off, new watching powers, unusual uploads, known spyware, decoy files)
+* Commercial spyware (Pegasus, Predator and others) in the threat data, from Amnesty, Citizen Lab and others
+* Link protection (optional): blocks known spyware, malware and stalkerware sites in every app and browser
+* More Android malware: MalwareBazaar by family, and malware sites from ThreatFox

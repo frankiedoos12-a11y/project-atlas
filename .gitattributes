@@ -1,0 +1,3 @@
+# The Android threat data is signed byte for byte: keep it exactly as committed on every system.
+android/app/src/main/assets/intel.txt -text
+android/app/src/main/assets/intel.txt.sig -text

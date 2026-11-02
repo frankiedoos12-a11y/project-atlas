@@ -1,6 +1,7 @@
 """The Android app's threat data builder (android/tools/build_intel.py)."""
 
 import datetime
+import json
 import importlib.util
 from pathlib import Path
 
@@ -90,19 +91,83 @@ def test_malwarebazaar_samples_are_added_by_family():
     assert not any("Other" in line or "Junk" in line for line in lines)
 
 
-def test_malwarebazaar_key_goes_only_in_the_header(capsys):
+def test_malwarebazaar_asks_for_android_families_and_keeps_the_key_in_the_header(capsys):
     sent = []
 
     def post(request):
         sent.append(request)
-        return '{"query_status": "ok", "data": []}'
+        body = request.data.decode()
+        if "get_file_type" in body:
+            return json.dumps({"query_status": "ok", "data": [{"sha256_hash": "a" * 64, "file_type": "apk"}]})
+        if "signature=SpyNote" in body:
+            return json.dumps({"query_status": "ok", "data": [
+                {"sha256_hash": "a" * 64, "file_type": "apk"},  # already there
+                {"sha256_hash": "b" * 64, "file_type": "apk", "signature": "SpyNote"},
+                {"sha256_hash": "c" * 64, "file_type": "exe", "signature": "SpyNote"}]})
+        return '{"query_status": "signature_not_found"}'
 
-    assert build_intel.malwarebazaar("secret-key", post) == '{"query_status": "ok", "data": []}'
-    assert sent[0].get_header("Auth-key") == "secret-key" and b"secret-key" not in sent[0].data
+    answer = json.loads(build_intel.malwarebazaar("secret-key", post))
+    assert [s["sha256_hash"] for s in answer["data"]] == ["a" * 64, "b" * 64]
+    assert len(sent) == 1 + len(build_intel.ANDROID_FAMILIES)
+    assert all(r.get_header("Auth-key") == "secret-key" and b"secret-key" not in r.data for r in sent)
     assert build_intel.malwarebazaar("bad", lambda r: '{"query_status": "unknown_auth_key"}') == ""
 
     def offline(request):
         raise OSError("no network")
 
     assert build_intel.malwarebazaar("secret-key", offline) == ""
+    assert build_intel.threatfox("secret-key", offline) == ""
     assert "secret-key" not in capsys.readouterr().err
+
+
+TF = json.dumps({"query_status": "ok", "data": [
+    {"ioc": "evil-c2.example", "ioc_type": "domain", "malware_printable": "SpyNote", "confidence_level": 100},
+    {"ioc": "maybe.example", "ioc_type": "domain", "malware_printable": "X", "confidence_level": 50},
+    {"ioc": "duckdns.org", "ioc_type": "domain", "malware_printable": "X", "confidence_level": 100},
+    {"ioc": "1.2.3.4:443", "ioc_type": "ip:port", "malware_printable": "X", "confidence_level": 100},
+    {"ioc": "thetruthspy.com", "ioc_type": "domain", "malware_printable": "X", "confidence_level": 100}]})
+
+
+def test_threatfox_domains_join_their_malware_family():
+    text = build_intel.build({"ioc.yaml": IOC, "watchware.yaml": WATCH, "samples.csv": SAMPLES,
+                              build_intel.MB_FILE: MB, build_intel.TF_FILE: TF}, datetime.date(2026, 10, 31))
+    lines = text.splitlines()
+    assert "# source: ThreatFox by abuse.ch, CC0, https://threatfox.abuse.ch" in lines
+    assert "D	evil-c2.example	4" in lines  # the same SpyNote family as MalwareBazaar's samples
+    assert "D	thetruthspy.com	0" in lines  # the stalkerware list named it first
+    assert not any("maybe.example" in l or "duckdns.org" in l or "1.2.3.4" in l for l in lines)
+    assert not any(l.startswith("F	") and l.split("	")[2] == "X" for l in lines)
+
+
+def test_commercial_spyware_sets_keep_what_a_phone_can_check():
+    stix = json.dumps({"type": "bundle", "objects": [
+        {"type": "malware", "name": "Pegasus"},
+        {"type": "indicator", "pattern": "[domain-name:value = 'free247downloads.com']"},
+        {"type": "indicator", "pattern": "[domain-name:value = 'google.com']"},  # shared: never listed whole
+        {"type": "indicator", "pattern": "[app:id = 'com.spy.helper']"},
+        {"type": "indicator", "pattern": "[file:hashes.sha256 = '" + "AB" * 32 + "']"},
+        {"type": "indicator", "pattern": "[process:name = 'bh']"},  # needs the whole phone: left out
+    ]})
+    text = build_intel.build({"ioc.yaml": IOC, "watchware.yaml": WATCH, "samples.csv": SAMPLES,
+                              build_intel.SPY_FILE: json.dumps({"Pegasus (NSO Group)": stix})},
+                             datetime.date(2026, 10, 31))
+    lines = text.splitlines()
+    fid = next(line.split("\t")[1] for line in lines if line.endswith("\tPegasus (NSO Group)\tspyware"))
+    assert f"D\tfree247downloads.com\t{fid}" in lines
+    assert f"P\tcom.spy.helper\t{fid}" in lines
+    assert f"H\t{'ab' * 32}\t{fid}" in lines
+    assert not any(line.startswith("D\tgoogle.com") for line in lines)
+    assert any("Amnesty International" in line for line in lines if line.startswith("# source: "))
+
+
+def test_spyware_sets_that_fail_to_download_are_left_out(capsys):
+    good = json.dumps({"objects": []})
+
+    def get(url):
+        if "pegasus" in url:
+            raise OSError("down")
+        return good
+
+    sets = json.loads(build_intel.spyware(get))
+    assert "Pegasus (NSO Group)" not in sets and "Predator (Intellexa)" in sets
+    assert "Pegasus (NSO Group) left out" in capsys.readouterr().err

@@ -20,6 +20,11 @@ import kotlin.concurrent.thread
 class TextWatch : NotificationListenerService() {
     private val seen = ArrayDeque<Int>() // recent messages, so an updated notification isn't checked twice
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Sensors.start(this) // Android keeps this service running, so Atlas can note microphone and camera use
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val n = sbn.notification ?: return
         if (sbn.packageName !in messageApps(this) || sbn.isOngoing || n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return

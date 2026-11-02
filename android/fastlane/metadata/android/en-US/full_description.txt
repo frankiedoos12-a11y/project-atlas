@@ -7,6 +7,8 @@
 <li><b>Scam check:</b> paste or share a message, or switch on scam alerts for texts. Classic tricks (unpaid tolls and parcels, gift cards, crypto, "call this number", remote access, prizes) are recognised on the phone. Messages are never saved or sent anywhere.</li>
 <li><b>Password check:</b> has a password appeared in a data leak? Only 5 characters of its fingerprint are sent to Have I Been Pwned; the password never leaves the phone.</li>
 <li><b>Storage, photos and files:</b> apps you haven't opened in months, duplicate photos and videos, the biggest files, and app files in your downloads. Removing anything goes through Android's own "Move to trash?" question.</li>
+<li><b>Is someone watching?</b> A layered compromise check: the phone's security chip vouches for how it started, Atlas notes microphone and camera use while the screen is off, new powers that let an app watch you, and unusual uploads by Android itself, looks for known commercial spyware and stalkerware, and can plant a decoy file that tells you if your files are stolen.</li>
+<li><b>Link protection (optional):</b> blocks known spyware, malware and stalkerware sites in every app and browser. Android shows it as a VPN, but only site-name lookups go through it, never your browsing, and nothing is saved or sent anywhere else.</li>
 <li><b>Automatic checks:</b> new apps within about 15 minutes, new downloads as they arrive, and the Protection checks once a day. A notification only when something needs a look.</li>
 </ul>
 
@@ -14,6 +16,6 @@
 <p>Add a free VirusTotal key to also check apps, files and links with about 70 antivirus engines. Only fingerprints and links are sent, never your files or messages. The key is encrypted with the phone's keystore.</p>
 
 <p><b>Light and private</b></p>
-<p>No ads, no tracking, no account, no libraries. Atlas only reads; every fix is yours, in Android's own settings. Threat data: Stalkerware indicators by Echap (CC BY 4.0), and MalwareBazaar by abuse.ch (CC0).</p>
+<p>No ads, no tracking, no account, no libraries. Atlas only reads; every fix is yours, in Android's own settings. Threat data: Stalkerware indicators by Echap (CC BY 4.0), commercial spyware indicators by Amnesty International, Citizen Lab and others (CC BY 2.0 and MIT), and MalwareBazaar and ThreatFox by abuse.ch (CC0).</p>
 
 <p>Atlas is also on Windows: <a href="https://github.com/frankiedoos12-a11y/project-atlas">github.com/frankiedoos12-a11y/project-atlas</a>.</p>

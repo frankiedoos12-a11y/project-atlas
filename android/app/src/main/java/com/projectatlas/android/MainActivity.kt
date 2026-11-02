@@ -58,6 +58,10 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(0, -2, 1f))
         }
         root.addView(screens)
+        root.addView(Button(this).apply {
+            text = "Is someone watching? (compromise check)"
+            setOnClickListener { startActivity(Intent(this@MainActivity, CompromiseActivity::class.java)) }
+        }, LinearLayout.LayoutParams(-1, -2))
         root.addView(text("You can also share a link, a message or a file to Project Atlas from any app, or select " +
             "text and choose \"Check with Project Atlas\".", 13f))
         root.addView(checkButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })

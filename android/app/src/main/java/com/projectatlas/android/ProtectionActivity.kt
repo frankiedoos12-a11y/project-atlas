@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.net.VpnService
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -39,6 +40,15 @@ class ProtectionActivity : Activity() {
         buttons.addView(automatic, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(buttons)
         showEdgeToEdge(root, dp(16))
+        if (intent.getBooleanExtra(LinkGuard.SHOW, false)) showLinks()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == VPN && resultCode == RESULT_OK) {
+            LinkGuard.start(this)
+            look()
+        }
     }
 
     override fun onResume() {
@@ -99,6 +109,14 @@ class ProtectionActivity : Activity() {
             "No message checked yet: one arrives as a notification. ") + "Tap to try a sample or change it." else
             "Tap to have Atlas warn you when a text, chat or email looks like a scam.", if (texts) Verdict.CLEAN.color else null,
             heading = true, onTap = { explainTextAlerts(texts) })
+        val links = LinkGuard.enabled(this)
+        val blocked = LinkGuard.count(this)
+        lines += Line("Link protection: ${if (links) "on" else "off"}", (if (links) "Blocked $blocked " +
+            "dangerous site${if (blocked == 1) "" else "s"} so far. Tap for recent blocks, allowed sites, or to " +
+            "switch it off." else "Tap to block known malware and stalkerware sites in every app and browser.") +
+            (if (links && LinkGuard.privateDnsBypasses(this)) " Private DNS is set to a provider, so Atlas can't " +
+                "see lookups: tap to fix." else ""), if (links) Verdict.CLEAN.color else null, heading = true,
+            onTap = { showLinks() })
         lines += Line("Checks", "Tap one for details", heading = true)
         for (f in findings) {
             val color = when (f.level) {
@@ -125,11 +143,89 @@ class ProtectionActivity : Activity() {
         } catch (e: Exception) {
             emptyList()
         }
-        val names = sources.map { it.substringBefore(", http") }
-        lines += Line("Threat data", "Known stalkerware, monitoring apps" + (if (sources.size > 1) " and Android " +
-            "malware" else "") + ", from $intel: ${names.joinToString("; ")}. Atlas fetches a newer copy once a week. " +
-            "Tap for the sources.", heading = true, onTap = { showSources(sources) })
+        val kinds = listOfNotNull("stalkerware", if (sources.any { "spyware" in it }) "commercial spyware" else null,
+            "monitoring apps", if (sources.any { "abuse.ch" in it }) "Android malware" else null)
+        lines += Line("Threat data", "Known ${kinds.dropLast(1).joinToString(", ")} and ${kinds.last()}, from " +
+            "$intel, by ${sources.size} sources. Atlas fetches a newer copy once a week. Tap for the sources.",
+            heading = true, onTap = { showSources(sources) })
         adapter.lines = lines
+    }
+
+    private fun showLinks() {
+        val bypass = if (LinkGuard.privateDnsBypasses(this)) "\n\nYour Private DNS is set to a provider's name, " +
+            "which Android uses instead, so Atlas can't see lookups. Set Private DNS to Automatic for link " +
+            "protection to work." else ""
+        if (!LinkGuard.enabled(this)) {
+            val dialog = AlertDialog.Builder(this).setTitle("Link protection").setMessage("Atlas looks at each site " +
+                "name your apps look up, right on the phone, and answers \"no such site\" for the ones the threat " +
+                "data lists as malware or stalkerware. Everything else goes on to your network's usual DNS, " +
+                "unchanged.\n\nAndroid shows this as a VPN with a key icon, but only lookups go through it, never " +
+                "your browsing, and nothing is sent anywhere else. Only one VPN can be on at a time." + bypass)
+                .setPositiveButton("Switch on") { _, _ ->
+                    val ask = VpnService.prepare(this)
+                    if (ask == null) onActivityResult(VPN, RESULT_OK, null) else startActivityForResult(ask, VPN)
+                }
+                .setNegativeButton("Cancel", null)
+            if (bypass.isNotEmpty()) dialog.setNeutralButton("Private DNS") { _, _ -> openSettings(PRIVATE_DNS) }
+            dialog.show()
+            return
+        }
+        val recent = LinkGuard.recent(this)
+        val allowed = LinkGuard.allowed(this).sorted()
+        val quad9 = LinkGuard.quad9(this)
+        val choices = listOfNotNull(
+            "Recently blocked (${recent.size})",
+            "Allowed sites (${allowed.size})",
+            if (quad9) "Look up sites with: Quad9" else "Look up sites with: this network's DNS",
+            if (bypass.isNotEmpty()) "Fix Private DNS" else null,
+            "Switch off",
+        )
+        AlertDialog.Builder(this).setTitle("Link protection: on").setItems(choices.toTypedArray()) { _, i ->
+            when (choices[i]) {
+                choices[0] -> showBlocked(recent)
+                choices[1] -> showAllowed(allowed)
+                choices[2] -> AlertDialog.Builder(this).setTitle("Look up sites with")
+                    .setMessage("This network's DNS: whatever the Wi-Fi or mobile network uses, as without Atlas." +
+                        "\n\nQuad9: a free, non-profit DNS service (quad9.net) that also blocks malicious sites " +
+                        "itself. Your lookups go to Quad9 instead of the network.")
+                    .setPositiveButton(if (quad9) "Use the network's" else "Use Quad9") { _, _ ->
+                        LinkGuard.setQuad9(this, !quad9)
+                    }.setNegativeButton("Cancel", null).show()
+                "Fix Private DNS" -> openSettings(PRIVATE_DNS)
+                else -> {
+                    LinkGuard.stop(this)
+                    look()
+                }
+            }
+        }.setNegativeButton("Close", null).show()
+    }
+
+    private fun showBlocked(recent: List<LinkGuard.Blocked>) {
+        if (recent.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Recently blocked").setMessage("Nothing blocked yet.")
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        val now = System.currentTimeMillis()
+        val items = recent.map { "${it.host}\n${it.family.name} (${it.family.what}), ${ago(now - it.time)}" }
+        AlertDialog.Builder(this).setTitle("Recently blocked: tap to allow").setItems(items.toTypedArray()) { _, i ->
+            val b = recent[i]
+            AlertDialog.Builder(this).setTitle("Allow ${b.host}?").setMessage("The threat data lists it as a site " +
+                "${b.family.name} (${b.family.what}) uses. Allow it only if you're sure it's safe.")
+                .setPositiveButton("Allow") { _, _ -> LinkGuard.allow(this, b.host, true) }
+                .setNegativeButton("Cancel", null).show()
+        }.setNegativeButton("Close", null).show()
+    }
+
+    private fun showAllowed(allowed: List<String>) {
+        if (allowed.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Allowed sites").setMessage("None: every listed site is blocked.")
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Allowed sites: tap to block again").setItems(allowed.toTypedArray()) { _, i ->
+            LinkGuard.allow(this, allowed[i], false)
+        }.setNegativeButton("Close", null).show()
     }
 
     private fun showSources(sources: List<String>) {
@@ -197,6 +293,11 @@ class ProtectionActivity : Activity() {
         } catch (e: ActivityNotFoundException) {
             startActivity(Intent(Settings.ACTION_SETTINGS)) // this phone names the page differently
         }
+    }
+
+    private companion object {
+        const val VPN = 2
+        const val PRIVATE_DNS = "android.settings.NETWORK_AND_INTERNET_SETTINGS" // Private DNS is on this page
     }
 
     private fun appSettings(pkg: String) =

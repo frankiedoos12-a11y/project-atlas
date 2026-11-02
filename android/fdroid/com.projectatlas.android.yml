@@ -1,6 +1,6 @@
 AntiFeatures:
   NonFreeNet:
-    en-US: Optional VirusTotal (your own key) and Have I Been Pwned checks.
+    en-US: Optional VirusTotal (your own key), Have I Been Pwned and Quad9 DNS.
 Categories:
   - Security
 License: GPL-3.0-or-later

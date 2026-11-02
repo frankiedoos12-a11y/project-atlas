@@ -179,7 +179,12 @@ object Pwned {
 /** Links to known stalkerware or monitoring sites (from the threat data, so no key needed). */
 fun siteReasons(links: List<String>, site: (String) -> Family?): List<Reason> = links.mapNotNull { link ->
     site(hostOf(link))?.let { f ->
-        if (f.stalkerware) {
+        if (f.spyware) {
+            Reason("Link to a spyware site", "This link goes to a site ${f.name} (commercial spyware) used. " +
+                "Don't open it, and tell someone you trust that you were sent it.", link, 4)
+        } else if (f.malware) {
+            Reason("Link to a malware site", "This link goes to a site ${f.name} malware uses. Don't open it.", link, 4)
+        } else if (f.stalkerware) {
             Reason("Link to stalkerware", "This link goes to ${f.name}, an app made to secretly watch someone's " +
                 "phone. Don't install anything from it.", link, 4)
         } else {
